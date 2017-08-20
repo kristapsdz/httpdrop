@@ -1,0 +1,40 @@
+	<div class="container">
+		<form action="/cgi-bin/httpdrop" method="post" enctype="multipart/form-data">
+			<input type="hidden" name="op" value="mkfile" />
+			<div class="field is-grouped">
+				<div class="control">
+					<div class="file has-name">
+						<label class="file-label">
+							<input required="required" class="file-input" type="file" name="file" id="file-name-input" />
+							<span class="file-cta">
+								<span class="file-icon">
+									<i class="fa fa-upload"></i>
+								</span>
+								<span class="file-label">
+									Choose a file&#8230;
+								</span>
+							</span>
+							<span class="file-name" id="file-name-text">
+								<span id="file-name-no-file"><i class="fa fa-square-o"></i></span>
+								<span id="file-name-has-file"><i class="fa fa-check-square-o"></i></span>
+							</span>
+						</label>
+					</div>
+				</div>
+				<div class="control">
+					<button class="button is-primary" type="submit">Upload</button>
+				</div>
+			</div>
+		</form>
+		<form action="/cgi-bin/httpdrop" method="post">
+			<input type="hidden" name="op" value="mkdir" />
+			<div class="field is-grouped">
+				<div class="control is-expanded">
+					<input required="required" type="text" placeholder="Create folder" name="dir" class="input is-fullwidth" />
+				</div>
+				<div class="control">
+					<button class="button is-primary" type="submit">Create</button>
+				</div>
+			</div>
+		</form>
+	</div>
