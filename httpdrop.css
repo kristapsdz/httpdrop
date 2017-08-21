@@ -8,7 +8,9 @@
 form			{ margin: 1em auto; }
 ul			{ list-style-type: none; 
 			  padding: 0; }
-ul li > *		{ display: block; }
+ul li > *		{ display: block; 
+			  text-overflow: ellipsis;
+			  overflow: hidden; }
 ul li			{ padding: 4pt; }
 ul li + li		{ margin-top: 4pt; }
 ul li:nth-child(odd)	{ background-color: #f0f0f0; }

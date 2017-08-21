@@ -1,5 +1,5 @@
 	<div class="container">
-		<form action="/cgi-bin/httpdrop" method="post" enctype="multipart/form-data">
+		<form action="/cgi-bin/httpdrop" method="post" enctype="multipart/form-data" id="file-uploader">
 			<input type="hidden" name="op" value="mkfile" />
 			<div class="field is-grouped">
 				<div class="control">
@@ -22,7 +22,7 @@
 					</div>
 				</div>
 				<div class="control">
-					<button class="button is-primary" type="submit">Upload</button>
+					<button id="file-uploader-button" class="button is-primary" type="submit">Upload</button>
 				</div>
 			</div>
 		</form>
