@@ -88,6 +88,18 @@ errorpage(struct kreq *r, const char *msg)
 	khtml_close(&req);
 }
 
+static int
+scan_dir_template(size_t index, void *arg)
+{
+	struct kreq	*r = arg;
+
+	if (index > 0)
+		return(0);
+
+	khttp_puts(r, r->fullpath);
+	return(1);
+}
+
 /*
  * Print a directory listing.
  * This is preceded by the form for directory creation and file upload.
@@ -103,6 +115,8 @@ scan_dir(int fd, const char *path, struct kreq *r)
 	int		 fl = O_RDONLY | O_DIRECTORY;
 	struct khtmlreq	 req;
 	size_t		 sz = 0;
+	struct ktemplate t;
+	const char	*ts = "URL";
 
 	if ('\0' != path[0]) {
 		if (-1 == (nfd = openat(fd, path, fl, 0)))
@@ -255,8 +269,14 @@ scan_dir(int fd, const char *path, struct kreq *r)
 		khtml_closeelem(&req, 1);
 	}
 
+	memset(&t, 0, sizeof(struct ktemplate));
+	t.key = &ts;
+	t.keysz = 1;
+	t.arg = r;
+	t.cb = scan_dir_template;
+
 	khtml_closeelem(&req, 1);
-	khttp_template(r, NULL, DATADIR "httpdrop.xml");
+	khttp_template(r, &t, DATADIR "httpdrop.xml");
 	khtml_closeelem(&req, 3);
 	khtml_close(&req);
 
