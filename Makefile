@@ -2,13 +2,11 @@ LDFLAGS	+= -L/usr/local/lib
 CFLAGS 	+= -I/usr/local/include
 CFLAGS	+= -W -Wall -Wextra -g
 
-# URL path (w/trailing slash) of JS/CSS media.
 HTURI	 = /
-
-# File-system path (relative to chroot) of XML media.
+WWWDIR	 = /var/www
 DATADIR	 = /data/
 LOGFILE	 = /logs/httpdrop-system.log
-CACHE	 = /cache/httpdrop
+CACHE	 = /cache/httpdrop/
 
 sinclude Makefile.local
 
@@ -21,9 +19,9 @@ httpdrop: main.o
 	$(CC) -static -o $@ main.o $(LDFLAGS) -lkcgi -lkcgihtml -lz
 
 installwww: httpdrop
-	install -m 0444 httpdrop.css bulma.css httpdrop.js /var/www/htdocs
-	install -m 0755 httpdrop /var/www/cgi-bin
-	install -m 0444 httpdrop.xml /var/www/data
+	install -m 0444 httpdrop.css bulma.css httpdrop.js $(WWWDIR)/htdocs
+	install -m 0755 httpdrop $(WWWDIR)/cgi-bin
+	install -m 0444 httpdrop.xml $(WWWDIR)/data
 
 clean:
 	rm -f httpdrop main.o
