@@ -196,7 +196,9 @@ scan_dir(int fd, const char *path, struct kreq *r)
 	khtml_elem(&req, KELEM_P);
 	khtml_puts(&req, 
 		"All files and folders are listed below. "
-		"Create more by using the controls at the bottom.");
+		"Create more by using the controls at the bottom. "
+		"Upload files for a given person into \"their\" "
+		"folder.");
 	khtml_closeelem(&req, 2);
 	khtml_attr(&req, KELEM_DIV,
 		KATTR_CLASS, "container",
@@ -262,8 +264,9 @@ scan_dir(int fd, const char *path, struct kreq *r)
 
 	if (0 == sz) {
 		khtml_elem(&req, KELEM_P);
-		khtml_puts(&req, "No files or directories to list.");
-		khtml_puts(&req, "Time to create or upload some?");
+		khtml_puts(&req, 
+			"No files or directories to list. "
+			"Time to create or upload some?");
 		khtml_closeelem(&req, 1);
 	} else {
 		khtml_closeelem(&req, 1);
