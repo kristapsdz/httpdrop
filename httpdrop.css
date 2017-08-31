@@ -1,19 +1,22 @@
-.hide			{ display: none; }
-.file-name .fa		{ vertical-align: middle; }
-.container		{ margin: 1em auto; }
+.hide				{ display: none; }
+.file-name .fa			{ vertical-align: middle; }
+.container			{ margin: 1em auto; }
 .section > .container:first-child
-			{ margin-bottom: 1em; }
+				{ margin-bottom: 1em; }
 .section > .container:nth-child(2)
-			{ margin-bottom: 3em; }
-form			{ margin: 1em auto; }
-ul			{ list-style-type: none; 
-			  padding: 0; }
-ul li > *		{ display: block; 
-			  text-overflow: ellipsis;
-			  overflow: hidden; }
-ul li			{ padding: 4pt; }
-ul li + li		{ margin-top: 4pt; }
-ul li:nth-child(odd)	{ background-color: #f0f0f0; }
+				{ margin-bottom: 3em; }
+form				{ margin: 1em auto; }
+form.icon			{ margin: 0; }
+ul				{ list-style-type: none; 
+				  padding: 0; }
+ul li > *			{ display: block; 
+				  text-overflow: ellipsis;
+				  overflow: hidden; }
+ul li				{ padding: 4pt; }
+ul li + li			{ margin-top: 4pt; }
+ul li:nth-child(odd)		{ background-color: #f0f0f0; }
+.immutable .has-mutable		{ display: none; }
+.mutable .has-immutable		{ display: none; }
 
 @media (min-width: 750px) {
 ul li			{ display: flex; }

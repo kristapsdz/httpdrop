@@ -27,6 +27,7 @@ enum	page {
 enum	key {
 	KEY_DIR,
 	KEY_FILE,
+	KEY_FILENAME,
 	KEY_OP,
 	KEY__MAX
 };
@@ -42,9 +43,10 @@ static const char *const pages[PAGE__MAX] = {
 };
 
 static const struct kvalid keys[KEY__MAX] = {
-	{ kvalid_stringne, "dir" },
-	{ NULL, "file" },
-	{ kvalid_stringne, "op" }
+	{ kvalid_stringne, "dir" }, /* KEY_DIR */
+	{ NULL, "file" }, /* KEY_FILE */
+	{ kvalid_stringne, "filename" }, /* KEY_FILENAME */
+	{ kvalid_stringne, "op" } /* KEY_OP */
 };
 
 /*
@@ -105,11 +107,11 @@ scan_dir_template(size_t index, void *arg)
  * This is preceded by the form for directory creation and file upload.
  */
 static void
-scan_dir(int fd, const char *path, struct kreq *r)
+get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 {
 	int		 nfd;
 	struct stat	 st;
-	char		*bufp;
+	char		*bufp, *fpath;
 	DIR		*dir;
 	struct dirent	*dp;
 	int		 fl = O_RDONLY | O_DIRECTORY;
@@ -136,6 +138,9 @@ scan_dir(int fd, const char *path, struct kreq *r)
 		errorpage(r, "Cannot open directory.");
 		return;
 	}
+
+	kasprintf(&fpath, "%s/%s%s", r->pname, path, 
+		'\0' != path[0] ? "/" : "");
 
 	/*
 	 * No more errors reported.
@@ -186,20 +191,18 @@ scan_dir(int fd, const char *path, struct kreq *r)
 		KATTR_SRC, HTURI "httpdrop.js",
 		KATTR__MAX);
 	khtml_closeelem(&req, 2);
-	khtml_elem(&req, KELEM_BODY);
+
+	/*
+	 * If the current directory has write permissions, note this as
+	 * our body class so that children can configure themselves.
+	 */
+
+	khtml_attr(&req, KELEM_BODY,
+		KATTR_CLASS, (rdwr ? "mutable" : "immutable"),
+		KATTR__MAX);
 	khtml_attr(&req, KELEM_SECTION,
 		KATTR_CLASS, "section",
 		KATTR__MAX);
-	khtml_attr(&req, KELEM_DIV,
-		KATTR_CLASS, "container",
-		KATTR__MAX);
-	khtml_elem(&req, KELEM_P);
-	khtml_puts(&req, 
-		"All files and folders are listed below. "
-		"Create more by using the controls at the bottom. "
-		"Upload files for a given person into \"their\" "
-		"folder.");
-	khtml_closeelem(&req, 2);
 	khtml_attr(&req, KELEM_DIV,
 		KATTR_CLASS, "container",
 		KATTR__MAX);
@@ -257,6 +260,38 @@ scan_dir(int fd, const char *path, struct kreq *r)
 		khtml_puts(&req, ctime(&st.st_ctim.tv_sec));
 		khtml_closeelem(&req, 1);
 
+		if (rdwr && DT_DIR != dp->d_type) {
+			khtml_attr(&req, KELEM_FORM,
+				KATTR_METHOD, "post",
+				KATTR_CLASS, "icon",
+				KATTR_ACTION, fpath,
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_INPUT,
+				KATTR_TYPE, "hidden",
+				KATTR_NAME, keys[KEY_OP].name,
+				KATTR_VALUE, "rmfile",
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_INPUT,
+				KATTR_TYPE, "hidden",
+				KATTR_NAME, keys[KEY_FILENAME].name,
+				KATTR_VALUE, dp->d_name,
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_DIV,
+				KATTR_CLASS, "field is-small",
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_BUTTON,
+				KATTR_CLASS, "button is-danger is-outlined",
+				KATTR_TYPE, "submit",
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_SPAN,
+				KATTR_CLASS, "icon is-small",
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_I,
+				KATTR_CLASS, "fa fa-times",
+				KATTR__MAX);
+			khtml_closeelem(&req, 5);
+		}
+
 		khtml_closeelem(&req, 1);
 		free(bufp);
 		sz++;
@@ -284,6 +319,7 @@ scan_dir(int fd, const char *path, struct kreq *r)
 	khtml_close(&req);
 
 	closedir(dir);
+	free(fpath);
 }
 
 /*
@@ -291,7 +327,7 @@ scan_dir(int fd, const char *path, struct kreq *r)
  * All we do use is the template feature to print out.
  */
 static void
-scan_file(int fd, const char *path, struct kreq *r)
+get_file(int fd, const char *path, struct kreq *r)
 {
 	int		  nfd;
 
@@ -315,6 +351,10 @@ scan_file(int fd, const char *path, struct kreq *r)
 	close(nfd);
 }
 
+/*
+ * Send a 301 error back to the current page.
+ * This is used after making a POST.
+ */
 static void
 send_301(struct kreq *r)
 {
@@ -337,22 +377,94 @@ send_301(struct kreq *r)
 }
 
 /*
+ * Unlink a regular file "fn" relative to the current path "path" with
+ * file descriptor "nfd".
+ */
+static void
+post_op_rmfile(int nfd, const char *path,
+	const char *fn, struct kreq *r)
+{
+
+	if (-1 == unlinkat(nfd, fn, 0) && ENOENT != errno) {
+		kutil_warn(r, NULL, "%s/%s: unlinkat", path, fn);
+		errorpage(r, "System failure (unlinkat).");
+	} else {
+		kutil_info(r, NULL, "%s/%s: unlink", path, fn);
+		send_301(r);
+	}
+}
+
+/*
+ * Make a directory "pn" relative to the current path "path" with file
+ * descriptor "nfd".
+ */
+static void
+post_op_mkdir(int nfd, const char *path,
+	const char *pn, struct kreq *r)
+{
+
+	if (-1 == mkdirat(nfd, pn, 0700) && EEXIST != errno) {
+		kutil_warn(r, NULL, "%s/%s: mkdirat", path, pn);
+		errorpage(r, "System failure (mkdir).");
+	} else {
+		kutil_info(r, NULL, "%s/%s: created", path, pn);
+		send_301(r);
+	}
+}
+
+/*
+ * Write the file "fn" relative to the current path "path" with file
+ * descriptor "nfd".
+ * Use file contents "data" of size "sz".
+ * FIXME: have this perform after closing the connection, else it might
+ * block the connection.
+ */
+static void
+post_op_mkfile(int nfd, const char *path,
+	const char *fn, const char *data, 
+	size_t sz, struct kreq *r)
+{
+	int	 dfd, fl = O_WRONLY|O_TRUNC|O_CREAT;
+	ssize_t	 ssz;
+
+	if (-1 == (dfd = openat(nfd, fn, fl, 0600))) {
+		kutil_warn(r, NULL, "%s/%s: openat", path, fn);
+		errorpage(r, "System failure (open).");
+		return;
+	}
+
+	if ((ssz = write(dfd, data, sz)) < 0) {
+		kutil_warn(r, NULL, "%s/%s: write", path, fn);
+		errorpage(r, "System failure (write).");
+	} else if ((size_t)ssz < sz) {
+		kutil_warnx(r, NULL, "%s/%s: short write", path, fn);
+		errorpage(r, "System failure (short write).");
+	} else {
+		kutil_info(r, NULL, "%s/%s: wrote %zu bytes", 
+			path, fn, sz);
+		send_301(r);
+	}
+
+	close(dfd);
+}
+
+/*
  * Process an operation to make a file or directory.
+ * This routes to either post_op_mkfile or post_op_mkdir.
  */
 static void
 post_op(int fd, const char *path, struct kreq *r)
 {
 	struct kpair	*kp, *kpf;
-	ssize_t		 ssz;
-	int		 nfd = -1, dfd = -1;
-	int		 fl = O_WRONLY|O_TRUNC|O_CREAT,
-			 dfl = O_RDONLY|O_DIRECTORY;
+	int		 nfd = -1;
+	int		 dfl = O_RDONLY|O_DIRECTORY;
 	const char	*target;
 
 	/* Start with validation. */
 
 	if (NULL == (kp = r->fieldmap[KEY_OP]) ||
 	    (strcmp(kp->parsed.s, "mkfile") &&
+	     strcmp(kp->parsed.s, "rmfile") &&
 	     strcmp(kp->parsed.s, "mkdir"))) {
 		errorpage(r, "Unknown operation.");
 		return;
@@ -365,6 +477,12 @@ post_op(int fd, const char *path, struct kreq *r)
 		return;
 	} 
 
+	if (0 == strcmp(kp->parsed.s, "rmfile") &&
+	    NULL == r->fieldmap[KEY_FILENAME]) {
+		send_301(r);
+		return;
+	}
+
 	if (0 == strcmp(kp->parsed.s, "mkdir") &&
 	    NULL == r->fieldmap[KEY_DIR]) {
 		send_301(r);
@@ -375,6 +493,8 @@ post_op(int fd, const char *path, struct kreq *r)
 
 	target = 0 == strcmp(kp->parsed.s, "mkfile") ?
 		r->fieldmap[KEY_FILE]->file :
+		0 == strcmp(kp->parsed.s, "rmfile") ?
+		r->fieldmap[KEY_FILENAME]->parsed.s :
 		r->fieldmap[KEY_DIR]->parsed.s;
 
 	if (NULL != strchr(target, '/') || '.' == target[0]) {
@@ -399,44 +519,48 @@ post_op(int fd, const char *path, struct kreq *r)
 
 	if (0 == strcmp(kp->parsed.s, "mkfile")) {
 		kpf = r->fieldmap[KEY_FILE];
-		if (-1 == (dfd = openat(nfd, target, fl, 0600))) {
-			kutil_warn(r, NULL, "%s: openat", target);
-			errorpage(r, "System failure (open).");
-			goto out;
-		}
-
-		/* FIXME: use some sort of polling...? */
-
-		if ((ssz = write(dfd, kpf->val, kpf->valsz)) < 0) {
-			kutil_warn(r, NULL, "%s: write", target);
-			errorpage(r, "System failure (write).");
-			goto out;
-		} else if ((size_t)ssz < kpf->valsz) {
-			kutil_warnx(r, NULL, "%s: short write", target);
-			errorpage(r, "System failure (short write).");
-			goto out;
-		}
-		kutil_info(r, NULL, "%s/%s: wrote %zu bytes", 
-			path, target, kpf->valsz);
-	} else {
-		assert(0 == strcmp(kp->parsed.s, "mkdir"));
-		if (-1 == mkdirat(nfd, target, 0700) && 
-		    EEXIST != errno) {
-			kutil_warn(r, NULL, "%s: mkdirat", target);
-			errorpage(r, "System failure (mkdir).");
-			goto out;
-		}
-		kutil_info(r, NULL, "%s/%s: created", path, target);
+		post_op_mkfile(nfd, path, target, 
+			kpf->val, kpf->valsz, r);
+	} else if (0 == strcmp(kp->parsed.s, "rmfile")) {
+		post_op_rmfile(nfd, path, target, r);
+	} else  {
+		post_op_mkdir(nfd, path, target, r);
 	}
-
-	/* On success, reload the calling page. */
-
-	send_301(r);
 out:
 	if (-1 != nfd)
 		close(nfd);
-	if (-1 != dfd)
-		close(dfd);
+}
+
+/*
+ * Open our root directory.
+ * All operations will use "openat" or the equivalent beneath this path.
+ * Returns the file descriptor or -1.
+ */
+static int
+open_cachedir(struct kreq *r)
+{
+	int	 	 fd;
+	const char	*root = CACHE;
+
+	fd = open(root, O_RDONLY | O_DIRECTORY, 0);
+
+	if (-1 == fd && ENOENT == errno) {
+		kutil_info(r, NULL, "%s: creating", root);
+		if (-1 == mkdir(root, 0700)) {
+			kutil_warn(r, NULL, "%s: mkdir", root);
+			errorpage(r, "Could not create cache.");
+			return(-1);
+		}
+		fd = open(root, O_RDONLY | O_DIRECTORY, 0);
+	}
+
+	if (-1 == fd) {
+		kutil_warn(r, NULL, "%s: open", root);
+		errorpage(r, "Could not open cache.");
+		return(-1);
+	}
+
+	return(fd);
 }
 
 int
@@ -444,9 +568,9 @@ main(void)
 {
 	struct kreq	 r;
 	enum kcgi_err	 er;
-	int		 fd = -1;
-	enum ftype	 ftype;
-	const char	*root = CACHE, *cp;
+	int		 fd = -1, rc;
+	enum ftype	 ftype = FTYPE_DIR;
+	const char	*cp;
 	char		*path = NULL;
 	struct stat	 st;
 
@@ -483,31 +607,10 @@ main(void)
 		goto out;
 	} 
 
-	/*
-	 * Open our root directory.
-	 * All operations will use "openat" or the equivalent beneath
-	 * this path.
-	 */
+	/* Open our cache directory. */
 
-	fd = open(root, O_RDONLY | O_DIRECTORY, 0);
-
-	if (-1 == fd && ENOENT == errno) {
-		kutil_info(&r, NULL, "%s: creating", root);
-		if (-1 == mkdir(root, 0700)) {
-			kutil_warn(&r, NULL, "%s: mkdir", root);
-			errorpage(&r, "Could not create cache.");
-			goto out;
-		}
-		fd = open(root, O_RDONLY | O_DIRECTORY, 0);
-	}
-
-	if (-1 == fd) {
-		kutil_warn(&r, NULL, "%s: open", root);
-		errorpage(&r, "Could not open cache.");
+	if (-1 == (fd = open_cachedir(&r)))
 		goto out;
-	}
-
-	ftype = FTYPE_DIR;
 
 	/*
 	 * See what kind of file we're asking for by looking it up under
@@ -523,20 +626,27 @@ main(void)
 	if ('/' == cp[0])
 		cp++;
 
-	if ('\0' != cp[0]) {
-		if (-1 == fstatat(fd, cp, &st, 0)) {
-			errorpage(&r, "Requested entity not found.");
-			goto out;
-		}
-		if (S_ISDIR(st.st_mode))
-			ftype = FTYPE_DIR;
-		else if (S_ISREG(st.st_mode))
-			ftype = FTYPE_FILE;
-		else
-			ftype = FTYPE_OTHER;
-	} 
+	rc = '\0' != cp[0] ? fstatat(fd, cp, &st, 0) : fstat(fd, &st);
 
-	if (FTYPE_OTHER == ftype) {
+	if (-1 == rc) {
+		errorpage(&r, "Requested entity not found.");
+		goto out;
+	}
+
+	if (S_ISDIR(st.st_mode))
+		ftype = FTYPE_DIR;
+	else if (S_ISREG(st.st_mode))
+		ftype = FTYPE_FILE;
+	else
+		ftype = FTYPE_OTHER;
+
+	/*
+	 * We need to be a regular file or a directory.
+	 * If we're a directory, we need execute access for our user.
+	 */
+
+	if (FTYPE_OTHER == ftype || 
+	    (FTYPE_DIR && ! (S_IXUSR & st.st_mode))) {
 		errorpage(&r, "Invalid requested entity.");
 		goto out;
 	} 
@@ -550,13 +660,15 @@ main(void)
 
 	if (KMETHOD_GET == r.method) {
 		if (FTYPE_DIR == ftype)
-			scan_dir(fd, cp, &r);
+			get_dir(fd, cp, S_IWUSR & st.st_mode, &r);
 		else
-			scan_file(fd, cp, &r);
+			get_file(fd, cp, &r);
 	} else {
 		assert(KMETHOD_POST == r.method);
 		if (FTYPE_DIR != ftype)
 			errorpage(&r, "Post into a regular file.");
+		else if ( ! (S_IWUSR & st.st_mode))
+			errorpage(&r, "Post into readonly directory");
 		else
 			post_op(fd, cp, &r);
 	}

@@ -1,4 +1,9 @@
-	<div class="container">
+	<!--
+	     This is the template header (HTML5 fragment) for httpdrop.
+	     It's printed after the directory listing part.
+	     The URL template key is replaced with the current directory.
+	 -->
+	<div class="container has-mutable">
 		<form action="/cgi-bin/httpdrop@@URL@@" method="post" enctype="multipart/form-data" id="file-uploader">
 			<input type="hidden" name="op" value="mkfile" />
 			<div class="field is-grouped">
@@ -37,4 +42,6 @@
 				</div>
 			</div>
 		</form>
+	</div>
+	<div class="container has-immutable">
 	</div>
