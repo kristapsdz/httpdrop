@@ -38,6 +38,15 @@ enum	ftype {
 	FTYPE_OTHER
 };
 
+/*
+ * A file reference.
+ */
+struct	fref {
+	char		*name; /* name of file in path */
+	char		*fullname; /* fullname of file */
+	struct stat	 st; /* last known stat */
+};
+
 static const char *const pages[PAGE__MAX] = {
 	"index", /* PAGE_INDEX */
 };
@@ -48,6 +57,10 @@ static const struct kvalid keys[KEY__MAX] = {
 	{ kvalid_stringne, "filename" }, /* KEY_FILENAME */
 	{ kvalid_stringne, "op" } /* KEY_OP */
 };
+
+static void
+errorpage(struct kreq *, const char *, ...) 
+	__attribute__((format(printf, 2, 3)));
 
 /*
  * Fill out all HTTP secure headers.
@@ -79,15 +92,71 @@ http_open(struct kreq *r, enum khttp code)
 }
 
 static void
-errorpage(struct kreq *r, const char *msg)
+errorpage(struct kreq *r, const char *fmt, ...)
 {
 	struct khtmlreq	 req;
+	char		*buf;
+	va_list		 ap;
+
+	va_start(ap, fmt);
+	if (-1 == vasprintf(&buf, fmt, ap))
+		exit(EXIT_FAILURE);
+	va_end(ap);
 
 	http_open(r, KHTTP_200);
 	khtml_open(&req, r, KHTML_PRETTY);
-	khtml_elem(&req, KELEM_P);
-	khtml_puts(&req, msg);
+	khtml_elem(&req, KELEM_DOCTYPE);
+	khtml_attr(&req, KELEM_HTML,
+		KATTR_LANG, "en",
+		KATTR__MAX);
+	khtml_elem(&req, KELEM_HEAD);
+	khtml_attr(&req, KELEM_META,
+		KATTR_CHARSET, "utf-8",
+		KATTR__MAX);
+	khtml_attr(&req, KELEM_META,
+		KATTR_NAME, "viewport",
+		KATTR_CONTENT, "width=device-width, initial-scale=1",
+		KATTR__MAX);
+	khtml_elem(&req, KELEM_TITLE);
+	khtml_puts(&req, "Error");
+	khtml_closeelem(&req, 1);
+	khtml_attr(&req, KELEM_LINK,
+		KATTR_HREF, HTURI "bulma.css",
+		KATTR_REL, "stylesheet",
+		KATTR__MAX);
+	khtml_attr(&req, KELEM_LINK,
+		KATTR_HREF, FONT_AWESOME_URL,
+		KATTR_REL, "stylesheet",
+		KATTR__MAX);
+	khtml_attr(&req, KELEM_LINK,
+		KATTR_HREF, HTURI "httpdrop.css",
+		KATTR_REL, "stylesheet",
+		KATTR__MAX);
+	khtml_closeelem(&req, 1);
+	khtml_attr(&req, KELEM_BODY,
+		KATTR_CLASS, "errorpage",
+		KATTR__MAX);
+	khtml_attr(&req, KELEM_SECTION,
+		KATTR_CLASS, "hero is-danger is-fullheight",
+		KATTR__MAX);
+	khtml_attr(&req, KELEM_DIV,
+		KATTR_CLASS, "hero-body",
+		KATTR__MAX);
+	khtml_attr(&req, KELEM_DIV,
+		KATTR_CLASS, "container",
+		KATTR__MAX);
+	khtml_attr(&req, KELEM_H1,
+		KATTR_CLASS, "title",
+		KATTR__MAX);
+	khtml_puts(&req, "Error");
+	khtml_closeelem(&req, 1);
+	khtml_attr(&req, KELEM_H2,
+		KATTR_CLASS, "subtitle",
+		KATTR__MAX);
+	khtml_puts(&req, buf);
+	khtml_closeelem(&req, 6);
 	khtml_close(&req);
+	free(buf);
 }
 
 static int
@@ -103,22 +172,43 @@ scan_dir_template(size_t index, void *arg)
 }
 
 /*
+ * Sort the files first by type (directory first, then files), then by
+ * name.
+ * Used with qsort().
+ */
+static int
+fref_cmp(const void *p1, const void *p2)
+{
+	const struct fref *f1 = p1, *f2 = p2;
+
+	if (S_ISDIR(f1->st.st_mode) && ! S_ISDIR(f2->st.st_mode))
+		return(-1);
+	if (S_ISDIR(f2->st.st_mode) && ! S_ISDIR(f1->st.st_mode))
+		return(1);
+
+	return(strcmp(f1->name, f2->name));
+}
+
+/*
  * Print a directory listing.
  * This is preceded by the form for directory creation and file upload.
+ * FIXME: use directory mtime and cache control.
  */
 static void
 get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 {
 	int		 nfd;
 	struct stat	 st;
-	char		*bufp, *fpath;
+	char		*fpath;
 	DIR		*dir;
 	struct dirent	*dp;
 	int		 fl = O_RDONLY | O_DIRECTORY;
 	struct khtmlreq	 req;
-	size_t		 sz = 0;
+	size_t		 sz = 0, filesz = 0, rfilesz = 0, i;
 	struct ktemplate t;
 	const char	*ts = "URL";
+	struct fref	*files = NULL;
+	const struct fref *ff;
 
 	if ('\0' != path[0]) {
 		if (-1 == (nfd = openat(fd, path, fl, 0)))
@@ -127,20 +217,58 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 		kutil_warn(r, NULL, "%s: dup", path);
 
 	if (-1 == nfd) {
-		errorpage(r, "Cannot open directory.");
+		errorpage(r, "Cannot open directory \"%s\".", path);
 		return;
 	}
 
-	/* Get the DIR pointer from the directory request. */
+	/* 
+	 * Get the DIR pointer from the directory request.
+	 * Then read all acceptable entries into our "files" array.
+	 */
 
 	if (NULL == (dir = fdopendir(nfd))) {
 		kutil_warn(r, NULL, "%s: fdopendir", path);
-		errorpage(r, "Cannot open directory.");
+		errorpage(r, "Cannot scan directory \"%s\".", path);
 		return;
 	}
 
-	kasprintf(&fpath, "%s/%s%s", r->pname, path, 
-		'\0' != path[0] ? "/" : "");
+	while (NULL != (dp = readdir(dir))) {
+		/* 
+		 * Disallow non-regular or directory, the current
+		 * directory, and previous when in the root.
+		 * Also don't let fstat errors flow.
+		 */
+
+		if ((DT_DIR != dp->d_type && 
+		     DT_REG != dp->d_type) ||
+		    0 == strcmp(dp->d_name, "."))
+			continue;
+		if (0 == strcmp(dp->d_name, "..") &&
+		    '\0' == path[0])
+			continue;
+		if (-1 == fstatat(nfd, dp->d_name, &st, 0))
+			continue;
+
+		/* Get file information... */
+
+		kasprintf(&fpath, "%s/%s%s%s", r->pname, 
+			path, '\0' != path[0] ? "/" : "", dp->d_name);
+		files = kreallocarray(files, 
+			filesz + 1, sizeof(struct fref));
+		files[filesz].st = st;
+		files[filesz].name = kstrdup(dp->d_name);
+		files[filesz].fullname = fpath;
+		filesz++;
+		if (strcmp(dp->d_name, ".."))
+			rfilesz++;
+	}
+
+	closedir(dir);
+
+	qsort(files, filesz, sizeof(struct fref), fref_cmp);
+
+	kasprintf(&fpath, "%s/%s%s", r->pname, 
+		path, '\0' != path[0] ? "/" : "");
 
 	/*
 	 * No more errors reported.
@@ -198,7 +326,14 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	 */
 
 	khtml_attr(&req, KELEM_BODY,
-		KATTR_CLASS, (rdwr ? "mutable" : "immutable"),
+		KATTR_CLASS, 
+			rdwr && rfilesz > 0 ? 
+			"mutable nonempty" :
+			rdwr && 0 == rfilesz ?
+			"mutable empty" :
+			0 == rdwr && rfilesz > 0 ?
+			"immutable nonempty" :
+			"immutable empty",
 		KATTR__MAX);
 	khtml_attr(&req, KELEM_SECTION,
 		KATTR_CLASS, "section",
@@ -206,61 +341,46 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	khtml_attr(&req, KELEM_DIV,
 		KATTR_CLASS, "container",
 		KATTR__MAX);
-	while (NULL != (dp = readdir(dir))) {
-		/* Only allow regular files. */
-		if (DT_DIR != dp->d_type && 
-		    DT_REG != dp->d_type)
-			continue;
-		if (0 == strcmp(dp->d_name, "."))
-			continue;
-		/* Do not print the ".." in the root directory. */
-		if (0 == strcmp(dp->d_name, "..") &&
-		    '\0' == path[0])
-			continue;
-		/* Get file information... */
-		if (-1 == fstatat(nfd, dp->d_name, &st, 0))
-			continue;
 
-		if (0 == sz)
-			khtml_elem(&req, KELEM_UL);
+	if (filesz)
+		khtml_elem(&req, KELEM_UL);
 
-		kasprintf(&bufp, "%s/%s%s%s", r->pname, path, 
-			'\0' != path[0] ? "/" : "", dp->d_name);
-
-		/* Print link and ctime. */
-
+	for (i = 0; i < filesz; i++) {
+		ff = &files[i];
 		khtml_elem(&req, KELEM_LI);
 		khtml_attr(&req, KELEM_A,
-			KATTR_HREF, bufp, 
+			KATTR_HREF, ff->fullname, 
 			KATTR__MAX);
-		khtml_puts(&req, dp->d_name);
-		if (DT_DIR == dp->d_type)
+		khtml_puts(&req, ff->name);
+		if (S_ISDIR(ff->st.st_mode))
 			khtml_puts(&req, "/");
 		khtml_closeelem(&req, 1);
 
 		khtml_elem(&req, KELEM_SPAN);
-		if (DT_DIR == dp->d_type) {
+		if (S_ISDIR(ff->st.st_mode)) {
 			khtml_puts(&req, "");
-		} else if (st.st_size > 1024 * 1024 * 1024) {
-			khtml_int(&req, st.st_size / 1024/1024/1024);
+		} else if (ff->st.st_size > 1024 * 1024 * 1024) {
+			khtml_int(&req, 
+				ff->st.st_size / 1024/1024/1024);
 			khtml_puts(&req, " GB");
-		} else if (st.st_size > 1024 * 1024) {
-			khtml_int(&req, st.st_size / 1024/1024);
+		} else if (ff->st.st_size > 1024 * 1024) {
+			khtml_int(&req, 
+				ff->st.st_size / 1024/1024);
 			khtml_puts(&req, " MB");
-		} else if (st.st_size > 1024) {
-			khtml_int(&req, st.st_size / 1024);
+		} else if (ff->st.st_size > 1024) {
+			khtml_int(&req, ff->st.st_size / 1024);
 			khtml_puts(&req, " KB");
 		} else {
-			khtml_int(&req, st.st_size);
+			khtml_int(&req, ff->st.st_size);
 			khtml_puts(&req, " B");
 		}
 		khtml_closeelem(&req, 1);
 
 		khtml_elem(&req, KELEM_SPAN);
-		khtml_puts(&req, ctime(&st.st_ctim.tv_sec));
+		khtml_puts(&req, ctime(&ff->st.st_ctim.tv_sec));
 		khtml_closeelem(&req, 1);
 
-		if (rdwr && DT_DIR != dp->d_type) {
+		if (rdwr && ! (S_ISDIR(ff->st.st_mode))) {
 			khtml_attr(&req, KELEM_FORM,
 				KATTR_METHOD, "post",
 				KATTR_CLASS, "icon",
@@ -274,15 +394,31 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 			khtml_attr(&req, KELEM_INPUT,
 				KATTR_TYPE, "hidden",
 				KATTR_NAME, keys[KEY_FILENAME].name,
-				KATTR_VALUE, dp->d_name,
+				KATTR_VALUE, ff->name,
 				KATTR__MAX);
 			khtml_attr(&req, KELEM_DIV,
 				KATTR_CLASS, "field is-small",
 				KATTR__MAX);
-			khtml_attr(&req, KELEM_BUTTON,
-				KATTR_CLASS, "button is-danger is-outlined",
-				KATTR_TYPE, "submit",
-				KATTR__MAX);
+			/*
+			 * Disallow deletion if we don't have access
+			 * rights to the file.
+			 */
+			if ((S_IWUSR|S_IWGRP|S_IWOTH) & 
+			    ff->st.st_mode)
+				khtml_attr(&req, KELEM_BUTTON,
+					KATTR_CLASS, "button "
+						"is-danger is-outlined",
+					KATTR_TITLE, "Delete",
+					KATTR_TYPE, "submit",
+					KATTR__MAX);
+			else
+				khtml_attr(&req, KELEM_BUTTON,
+					KATTR_CLASS, "button "
+						"is-danger is-outlined",
+					KATTR_TITLE, "Delete",
+					KATTR_DISABLED, "disabled",
+					KATTR_TYPE, "submit",
+					KATTR__MAX);
 			khtml_attr(&req, KELEM_SPAN,
 				KATTR_CLASS, "icon is-small",
 				KATTR__MAX);
@@ -293,11 +429,10 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 		}
 
 		khtml_closeelem(&req, 1);
-		free(bufp);
 		sz++;
 	}
 
-	if (0 == sz) {
+	if (0 == filesz) {
 		khtml_elem(&req, KELEM_P);
 		khtml_puts(&req, 
 			"No files or directories to list. "
@@ -318,8 +453,12 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	khtml_closeelem(&req, 3);
 	khtml_close(&req);
 
-	closedir(dir);
 	free(fpath);
+	for (i = 0; i < filesz; i++) {
+		free(files[i].name);
+		free(files[i].fullname);
+	}
+	free(files);
 }
 
 /*
@@ -334,9 +473,14 @@ get_file(int fd, const char *path, struct kreq *r)
 	nfd = openat(fd, path, O_RDONLY, 0);
 	if (-1 == nfd) {
 		kutil_warn(r, NULL, "%s: openat", path);
-		errorpage(r, "Cannot open file.");
+		errorpage(r, "Cannot open file \"%s\".", path);
 		return;
 	}
+
+	/*
+	 * FIXME: use last-updated with the struct state of the
+	 * file and cross-check.
+	 */
 
 	khttp_head(r, kresps[KRESP_STATUS], 
 		"%s", khttps[KHTTP_200]);
@@ -356,11 +500,11 @@ get_file(int fd, const char *path, struct kreq *r)
  * This is used after making a POST.
  */
 static void
-send_301(struct kreq *r)
+send_301_path(struct kreq *r, const char *fullpath)
 {
 	char	*np, *path;
 
-	kasprintf(&path, "%s%s", r->pname, r->fullpath);
+	kasprintf(&path, "%s%s", r->pname, fullpath);
 	np = kutil_urlabs(r->scheme, r->host, r->port, path);
 	free(path);
 
@@ -377,6 +521,17 @@ send_301(struct kreq *r)
 }
 
 /*
+ * Send a 301 error back to the current page.
+ * This is used after making a POST.
+ */
+static void
+send_301(struct kreq *r)
+{
+
+	send_301_path(r, r->fullpath);
+}
+
+/*
  * Unlink a regular file "fn" relative to the current path "path" with
  * file descriptor "nfd".
  */
@@ -387,10 +542,38 @@ post_op_rmfile(int nfd, const char *path,
 
 	if (-1 == unlinkat(nfd, fn, 0) && ENOENT != errno) {
 		kutil_warn(r, NULL, "%s/%s: unlinkat", path, fn);
-		errorpage(r, "System failure (unlinkat).");
+		errorpage(r, "Cannot remove \"%s\".", fn);
 	} else {
 		kutil_info(r, NULL, "%s/%s: unlink", path, fn);
 		send_301(r);
+	}
+}
+
+/*
+ * Try to remove the current directory.
+ * Send us to the directory above our own.
+ */
+static void
+post_op_rmdir(int fd, const char *path, struct kreq *r)
+{
+	char	*newpath, *cp;
+
+	if ('\0' == path[0]) {
+		kutil_warn(r, NULL, "tried removing root");
+		errorpage(r, "You cannot remove the root directory.");
+		return;
+	}
+
+	if (-1 == unlinkat(fd, path, AT_REMOVEDIR) && ENOENT != errno) {
+		kutil_warn(r, NULL, "%s: unlinkat (dir)", path);
+		errorpage(r, "Cannot remove \"%s\".", path);
+	} else {
+		kutil_info(r, NULL, "%s: unlink (dir)", path);
+		newpath = kstrdup(r->fullpath);
+		if (NULL != (cp = strrchr(newpath, '/')))
+			*cp = '\0';
+		send_301_path(r, newpath);
+		free(newpath);
 	}
 }
 
@@ -405,7 +588,7 @@ post_op_mkdir(int nfd, const char *path,
 
 	if (-1 == mkdirat(nfd, pn, 0700) && EEXIST != errno) {
 		kutil_warn(r, NULL, "%s/%s: mkdirat", path, pn);
-		errorpage(r, "System failure (mkdir).");
+		errorpage(r, "Cannot create directory \"%s\".", pn);
 	} else {
 		kutil_info(r, NULL, "%s/%s: created", path, pn);
 		send_301(r);
@@ -429,16 +612,16 @@ post_op_mkfile(int nfd, const char *path,
 
 	if (-1 == (dfd = openat(nfd, fn, fl, 0600))) {
 		kutil_warn(r, NULL, "%s/%s: openat", path, fn);
-		errorpage(r, "System failure (open).");
+		errorpage(r, "Cannot open \"%s\".", fn);
 		return;
 	}
 
 	if ((ssz = write(dfd, data, sz)) < 0) {
 		kutil_warn(r, NULL, "%s/%s: write", path, fn);
-		errorpage(r, "System failure (write).");
+		errorpage(r, "Cannot write to file \"%s\".", fn);
 	} else if ((size_t)ssz < sz) {
 		kutil_warnx(r, NULL, "%s/%s: short write", path, fn);
-		errorpage(r, "System failure (short write).");
+		errorpage(r, "Cannot write to file \"%s\".", fn);
 	} else {
 		kutil_info(r, NULL, "%s/%s: wrote %zu bytes", 
 			path, fn, sz);
@@ -465,8 +648,9 @@ post_op(int fd, const char *path, struct kreq *r)
 	if (NULL == (kp = r->fieldmap[KEY_OP]) ||
 	    (strcmp(kp->parsed.s, "mkfile") &&
 	     strcmp(kp->parsed.s, "rmfile") &&
+	     strcmp(kp->parsed.s, "rmdir") &&
 	     strcmp(kp->parsed.s, "mkdir"))) {
-		errorpage(r, "Unknown operation.");
+		errorpage(r, "Unknown file operation.");
 		return;
 	} 
 
@@ -495,9 +679,11 @@ post_op(int fd, const char *path, struct kreq *r)
 		r->fieldmap[KEY_FILE]->file :
 		0 == strcmp(kp->parsed.s, "rmfile") ?
 		r->fieldmap[KEY_FILENAME]->parsed.s :
-		r->fieldmap[KEY_DIR]->parsed.s;
+		0 == strcmp(kp->parsed.s, "mkdir") ?
+		r->fieldmap[KEY_DIR]->parsed.s : NULL;
 
-	if (NULL != strchr(target, '/') || '.' == target[0]) {
+	if (NULL != target &&
+	    (NULL != strchr(target, '/') || '.' == target[0])) {
 		errorpage(r, "File name security violation.");
 		return;
 	}
@@ -511,7 +697,7 @@ post_op(int fd, const char *path, struct kreq *r)
 		kutil_warn(r, NULL, "%s: dup", path);
 
 	if (-1 == nfd) {
-		errorpage(r, "Cannot open directory.");
+		errorpage(r, "Cannot open directory \"%s\".", path);
 		goto out;
 	}
 
@@ -523,6 +709,8 @@ post_op(int fd, const char *path, struct kreq *r)
 			kpf->val, kpf->valsz, r);
 	} else if (0 == strcmp(kp->parsed.s, "rmfile")) {
 		post_op_rmfile(nfd, path, target, r);
+	} else if (0 == strcmp(kp->parsed.s, "rmdir")) {
+		post_op_rmdir(fd, path, r);
 	} else  {
 		post_op_mkdir(nfd, path, target, r);
 	}
@@ -568,7 +756,7 @@ main(void)
 {
 	struct kreq	 r;
 	enum kcgi_err	 er;
-	int		 fd = -1, rc;
+	int		 fd = -1, rc, isw;
 	enum ftype	 ftype = FTYPE_DIR;
 	const char	*cp;
 	char		*path = NULL;
@@ -595,7 +783,7 @@ main(void)
 
 	if (KMETHOD_GET != r.method && 
 	    KMETHOD_POST != r.method) {
-		errorpage(&r, "Incorrect HTTP method.");
+		errorpage(&r, "Invalid HTTP method.");
 		goto out;
 	}
 
@@ -629,7 +817,8 @@ main(void)
 	rc = '\0' != cp[0] ? fstatat(fd, cp, &st, 0) : fstat(fd, &st);
 
 	if (-1 == rc) {
-		errorpage(&r, "Requested entity not found.");
+		errorpage(&r, "Requested \"%s\" "
+			"not found or unavailable.", cp);
 		goto out;
 	}
 
@@ -645,11 +834,14 @@ main(void)
 	 * If we're a directory, we need execute access for our user.
 	 */
 
-	if (FTYPE_OTHER == ftype || 
-	    (FTYPE_DIR && ! (S_IXUSR & st.st_mode))) {
-		errorpage(&r, "Invalid requested entity.");
+	if (FTYPE_OTHER == ftype || (FTYPE_DIR && 
+	     ! ((S_IXUSR|S_IXGRP|S_IXOTH) & st.st_mode))) {
+		errorpage(&r, "Requested \"%s\" "
+			"not found or unavailable.", cp);
 		goto out;
 	} 
+
+	isw = (S_IWUSR|S_IWGRP|S_IWOTH) & st.st_mode;
 
 	/*
 	 * If we're a GET, then either list the directory contents or
@@ -660,15 +852,15 @@ main(void)
 
 	if (KMETHOD_GET == r.method) {
 		if (FTYPE_DIR == ftype)
-			get_dir(fd, cp, S_IWUSR & st.st_mode, &r);
+			get_dir(fd, cp, isw, &r);
 		else
 			get_file(fd, cp, &r);
 	} else {
 		assert(KMETHOD_POST == r.method);
 		if (FTYPE_DIR != ftype)
 			errorpage(&r, "Post into a regular file.");
-		else if ( ! (S_IWUSR & st.st_mode))
-			errorpage(&r, "Post into readonly directory");
+		else if ( ! isw)
+			errorpage(&r, "Post into readonly directory.");
 		else
 			post_op(fd, cp, &r);
 	}

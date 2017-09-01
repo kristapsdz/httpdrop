@@ -15,8 +15,11 @@ ul li > *			{ display: block;
 ul li				{ padding: 4pt; }
 ul li + li			{ margin-top: 4pt; }
 ul li:nth-child(odd)		{ background-color: #f0f0f0; }
+#form-rmdir			{ margin: 2em auto; }
 .immutable .has-mutable		{ display: none; }
 .mutable .has-immutable		{ display: none; }
+.empty .is-nonempty		{ display: none; }
+.nonempty .is-empty		{ display: none; }
 
 @media (min-width: 750px) {
 ul li			{ display: flex; }

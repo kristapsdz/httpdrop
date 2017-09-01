@@ -2,8 +2,25 @@
 	     This is the template header (HTML5 fragment) for httpdrop.
 	     It's printed after the directory listing part.
 	     The URL template key is replaced with the current directory.
+	     The encompassing <body> will have a "mutable" if the current
+	     directory is writable; else, "immutable".
 	 -->
 	<div class="container has-mutable">
+		<form id="form-rmdir" action="/cgi-bin/httpdrop@@URL@@" method="post">
+			<div class="is-empty field is-horizontal">
+				<input type="hidden" name="op" value="rmdir" />
+				<div class="field-label is-normal">
+					<label class="label">Directory is empty.  Remove?</label>
+				</div>
+				<div class="field-body">
+					<div class="field is-grouped">
+						<div class="control">
+							<button class="button is-primary" type="submit">Delete</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		</form>
 		<form action="/cgi-bin/httpdrop@@URL@@" method="post" enctype="multipart/form-data" id="file-uploader">
 			<input type="hidden" name="op" value="mkfile" />
 			<div class="field is-grouped">
