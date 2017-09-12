@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Directory listing</title>
+		<link href="/bulma.css" rel="stylesheet" />
+		<link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" />
+		<link href="/httpdrop.css" rel="stylesheet" />
+		<script src="/httpdrop.js"></script>
+	</head>
+	<body class="loginpage">
+		<section class="hero is-fullheight">
+			<div class="hero-body">
+				<div class="container">
+					<form action="/cgi-bin/httpdrop@@URL@@" method="post">
+						<input type="hidden" name="op" value="login" />
+						<p id="errormsg">
+							Login failed.
+							Please try again.
+						</p>
+						<div class="field">
+							<div class="control has-icon has-icon-right">
+								<input class="input email-input" type="text" placeholder="Login" required="required" />
+								<span class="icon user"><i class="fa fa-user"></i></span>
+							</div>
+						</div>
+						<div class="field">
+							<div class="control has-icon has-icon-right">
+								<input class="input password-input" type="password" placeholder="Password" required="required" />
+								<span class="icon user"><i class="fa fa-lock"></i></span>
+							</div>
+						</div>
+						<div class="field">
+							<div class="control login">
+								<button class="button is-success is-outlined is-fullwidth">Login</button>
+							</div>
+						</div>
+					</form>
+				</div>
+			</div>
+		</section>
+	</body>
+</html>

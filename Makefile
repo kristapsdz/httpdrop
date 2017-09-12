@@ -6,14 +6,14 @@ HTURI	 = /
 WWWDIR	 = /var/www
 DATADIR	 = /data/
 LOGFILE	 = /logs/httpdrop-system.log
-CACHE	 = /cache/httpdrop/
+CACHEDIR = /cache/httpdrop
 
 sinclude Makefile.local
 
 CFLAGS	+= -DHTURI=\"$(HTURI)\"
 CFLAGS	+= -DDATADIR=\"$(DATADIR)\"
 CFLAGS	+= -DLOGFILE=\"$(LOGFILE)\"
-CFLAGS	+= -DCACHE=\"$(CACHE)\"
+CFLAGS	+= -DCACHE=\"$(CACHEDIR)\"
 
 httpdrop: main.o
 	$(CC) -static -o $@ main.o $(LDFLAGS) -lkcgi -lkcgihtml -lz
@@ -21,7 +21,7 @@ httpdrop: main.o
 installwww: httpdrop
 	install -m 0444 httpdrop.css bulma.css httpdrop.js $(WWWDIR)/htdocs
 	install -m 0755 httpdrop $(WWWDIR)/cgi-bin
-	install -m 0444 httpdrop.xml $(WWWDIR)/data
+	install -m 0444 httpdrop.xml loginpage.xml $(WWWDIR)/data
 
 clean:
 	rm -f httpdrop main.o

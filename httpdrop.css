@@ -20,6 +20,9 @@ ul li:nth-child(odd)		{ background-color: #f0f0f0; }
 .mutable .has-immutable		{ display: none; }
 .empty .is-nonempty		{ display: none; }
 .nonempty .is-empty		{ display: none; }
+.loginpage form			{ max-width: 400px; }
+.loginpage #errormsg		{ display: none; }
+.loginpage.error #errormsg	{ display: block; }
 
 @media (min-width: 750px) {
 ul li			{ display: flex; }

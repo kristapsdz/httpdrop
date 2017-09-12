@@ -1,4 +1,5 @@
 /*	$Id$ */
+#include <sys/queue.h>
 #include <sys/stat.h>
 
 #include <assert.h>
@@ -19,6 +20,16 @@
 	"https://maxcdn.bootstrapcdn.com/" \
 	"font-awesome/4.7.0/css/font-awesome.min.css"
 
+#ifndef	CACHEDIR
+# define CACHEDIR "/cache/httpdrop"
+#endif
+#ifndef	FILEDIR
+# define FILEDIR "files"
+#endif
+#ifndef	AUTHDIR
+# define AUTHDIR "cookies"
+#endif
+
 enum	page {
 	PAGE_INDEX,
 	PAGE__MAX
@@ -29,23 +40,36 @@ enum	key {
 	KEY_FILE,
 	KEY_FILENAME,
 	KEY_OP,
+	KEY_SESSCOOKIE,
+	KEY_SESSUSER,
 	KEY__MAX
 };
 
 enum	ftype {
-	FTYPE_DIR,
-	FTYPE_FILE,
+	FTYPE_DIR, /* directory */
+	FTYPE_FILE, /* regular file */
 	FTYPE_OTHER
 };
 
 /*
- * A file reference.
+ * A file reference used for listing directory contents.
  */
 struct	fref {
 	char		*name; /* name of file in path */
 	char		*fullname; /* fullname of file */
 	struct stat	 st; /* last known stat */
 };
+
+/*
+ * A user used for logging in and session cookies.
+ */
+struct	user {
+	char		*name; /* username */
+	char		*hash; /* bcrypt(3) password */
+	TAILQ_ENTRY(user) entries;
+};
+
+TAILQ_HEAD(userq, user);
 
 static const char *const pages[PAGE__MAX] = {
 	"index", /* PAGE_INDEX */
@@ -55,7 +79,9 @@ static const struct kvalid keys[KEY__MAX] = {
 	{ kvalid_stringne, "dir" }, /* KEY_DIR */
 	{ NULL, "file" }, /* KEY_FILE */
 	{ kvalid_stringne, "filename" }, /* KEY_FILENAME */
-	{ kvalid_stringne, "op" } /* KEY_OP */
+	{ kvalid_stringne, "op" }, /* KEY_OP */
+	{ kvalid_int, "stok" }, /* KEY_SESSCOOKIE */
+	{ kvalid_stringne, "suser" }, /* KEY_SESSUSER */
 };
 
 static void
@@ -89,6 +115,33 @@ http_open(struct kreq *r, enum khttp code)
 
 	http_alloc(r, code);
 	khttp_body(r);
+}
+
+static int
+loginpage_template(size_t index, void *arg)
+{
+	struct kreq	*r = arg;
+
+	if (index > 0)
+		return(0);
+
+	khttp_puts(r, r->fullpath);
+	return(1);
+}
+
+static void
+loginpage(struct kreq *r)
+{
+	struct ktemplate t;
+	const char	*ts = "URL";
+
+	memset(&t, 0, sizeof(struct ktemplate));
+	t.key = &ts;
+	t.keysz = 1;
+	t.arg = r;
+	t.cb = loginpage_template;
+	http_open(r, KHTTP_200);
+	khttp_template(r, &t, DATADIR "loginpage.xml");
 }
 
 static void
@@ -159,18 +212,6 @@ errorpage(struct kreq *r, const char *fmt, ...)
 	free(buf);
 }
 
-static int
-scan_dir_template(size_t index, void *arg)
-{
-	struct kreq	*r = arg;
-
-	if (index > 0)
-		return(0);
-
-	khttp_puts(r, r->fullpath);
-	return(1);
-}
-
 /*
  * Sort the files first by type (directory first, then files), then by
  * name.
@@ -187,6 +228,18 @@ fref_cmp(const void *p1, const void *p2)
 		return(1);
 
 	return(strcmp(f1->name, f2->name));
+}
+
+static int
+get_dir_template(size_t index, void *arg)
+{
+	struct kreq	*r = arg;
+
+	if (index > 0)
+		return(0);
+
+	khttp_puts(r, r->fullpath);
+	return(1);
 }
 
 /*
@@ -276,17 +329,8 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	 * upload more files.
 	 */
 
-	khttp_head(r, kresps[KRESP_STATUS], 
-		"%s", khttps[KHTTP_200]);
-	khttp_head(r, kresps[KRESP_CONTENT_TYPE], 
-		"%s", kmimetypes[r->mime]);
-	khttp_head(r, "X-Content-Type-Options", "nosniff");
-	khttp_head(r, "X-Frame-Options", "DENY");
-	khttp_head(r, "X-XSS-Protection", "1; mode=block");
-	khttp_body(r);
-
+	http_open(r, KHTTP_200);
 	khtml_open(&req, r, KHTML_PRETTY);
-
 	khtml_elem(&req, KELEM_DOCTYPE);
 
 	khtml_attr(&req, KELEM_HTML,
@@ -446,7 +490,7 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	t.key = &ts;
 	t.keysz = 1;
 	t.arg = r;
-	t.cb = scan_dir_template;
+	t.cb = get_dir_template;
 
 	khtml_closeelem(&req, 1);
 	khttp_template(r, &t, DATADIR "httpdrop.xml");
@@ -720,15 +764,120 @@ out:
 }
 
 /*
- * Open our root directory.
+ * Try to open the non-empty and relative directory "dir" within the
+ * cache directory.
+ * Return the file descriptor on success else -1.
+ */
+static int
+open_dir(int cfd, const char *cache, const char *dir, struct kreq *r)
+{
+	int	 	 fd;
+
+	if ('\0' == dir[0]) {
+		kutil_warn(r, NULL, "empty directory");
+		return(-1);
+	} else if ('/' == dir[0]) {
+		kutil_warn(r, NULL, "%s: absolute directory", dir);
+		return(-1);
+	}
+
+	fd = openat(cfd, dir, O_RDONLY | O_DIRECTORY, 0);
+
+	if (-1 == fd && ENOENT == errno) {
+		kutil_info(r, NULL, "%s/%s: creating", cache, dir);
+		if (-1 == mkdirat(cfd, dir, 0700)) {
+			kutil_warn(r, NULL, "%s/%s: mkdir", cache, dir);
+			return(-1);
+		}
+		fd = openat(cfd, dir, O_RDONLY | O_DIRECTORY, 0);
+	}
+
+	if (-1 == fd) {
+		kutil_warn(r, NULL, "%s/%s: open", cache, dir);
+		return(-1);
+	}
+
+	return(fd);
+}
+
+/*
+ * Try to open the file ".htpasswd" within the cache directory opened as
+ * "cfd" in "cache".
+ * Return zero on fatal error, non-zero on success.
+ * The "uq" will not be allocated if the file was not found; otherwise,
+ * it will be allocated and filled with a (possibly-zero) user entries.
+ * Note that "uq" might be allocated on failure.
+ */
+static int
+open_users(struct userq **uq, 
+	int cfd, const char *cache, struct kreq *r)
+{
+	int		 fd;
+	FILE		*f;
+	char		*buf;
+	size_t		 len, line = 1;
+	char		*user, *pass;
+	struct user	*u;
+
+	fd = openat(cfd, ".htpasswd", O_RDONLY, 0);
+	if (-1 == fd && ENOENT != errno) {
+		kutil_warn(r, NULL, "%s/.htpasswd: open", cache);
+		return(0);
+	} else if (-1 == fd) 
+		return(1);
+
+	if (NULL == (f = fdopen(fd, "r"))) {
+		kutil_warn(r, NULL, "%s/.htpasswd: fopen", cache);
+		close(fd);
+		return(0);
+	}
+
+	*uq = kmalloc(sizeof(struct userq));
+	TAILQ_INIT(*uq);
+
+	kutil_info(r, NULL, "%s/.htpasswd: using passwords", cache);
+
+	while (NULL != (buf = fgetln(f, &len))) {
+		if ('\n' != buf[len - 1])
+			continue;
+		buf[len - 1] = '\0';
+		user = buf;
+		if (NULL == (pass = strchr(user, ':'))) {
+			kutil_warn(r, NULL, "%s/.htpasswd:%zu: "
+				"malformed syntax", cache, line);
+			fclose(f);
+			return(0);
+		}
+		(*pass++) = '\0';
+		u = kcalloc(1, sizeof(struct user));
+		u->name = kstrdup(user);
+		u->hash = kstrdup(pass);
+		TAILQ_INSERT_TAIL(*uq, u, entries);
+		line++;
+		kutil_info(r, NULL, "%s/.htpasswd: %s, %s", cache, user, pass);
+	}
+
+	fclose(f);
+	return(1);
+}
+
+/*
+ * Open our root directory, which must be absolute.
  * All operations will use "openat" or the equivalent beneath this path.
  * Returns the file descriptor or -1.
  */
 static int
-open_cachedir(struct kreq *r)
+open_cachedir(const char *root, struct kreq *r)
 {
 	int	 	 fd;
-	const char	*root = CACHE;
+
+	if ('\0' == root[0]) {
+		kutil_warn(r, NULL, "empty cache directory");
+		return(-1);
+	} else if ('/' != root[0]) {
+		kutil_warn(r, NULL, "%s: relative cache directory", root);
+		return(-1);
+	}
 
 	fd = open(root, O_RDONLY | O_DIRECTORY, 0);
 
@@ -736,7 +885,6 @@ open_cachedir(struct kreq *r)
 		kutil_info(r, NULL, "%s: creating", root);
 		if (-1 == mkdir(root, 0700)) {
 			kutil_warn(r, NULL, "%s: mkdir", root);
-			errorpage(r, "Could not create cache.");
 			return(-1);
 		}
 		fd = open(root, O_RDONLY | O_DIRECTORY, 0);
@@ -744,7 +892,6 @@ open_cachedir(struct kreq *r)
 
 	if (-1 == fd) {
 		kutil_warn(r, NULL, "%s: open", root);
-		errorpage(r, "Could not open cache.");
 		return(-1);
 	}
 
@@ -756,11 +903,14 @@ main(void)
 {
 	struct kreq	 r;
 	enum kcgi_err	 er;
-	int		 fd = -1, rc, isw;
+	int		 cachefd = -1, rc, isw, filefd = -1,
+			 authfd = -1;
 	enum ftype	 ftype = FTYPE_DIR;
 	const char	*cp;
 	char		*path = NULL;
 	struct stat	 st;
+	struct userq	*uq = NULL;
+	struct user	*u;
 
 	/* Log into a separate logfile (not system log). */
 
@@ -774,6 +924,11 @@ main(void)
 	if (KCGI_OK != er) {
 		fprintf(stderr, "HTTP parse error: %d\n", er);
 		return(EXIT_FAILURE);
+	}
+
+	if (-1 == pledge("rpath cpath wpath stdio", NULL)) {
+		kutil_warn(&r, NULL, "pledge");
+		goto out;
 	}
 
 	/*
@@ -795,11 +950,6 @@ main(void)
 		goto out;
 	} 
 
-	/* Open our cache directory. */
-
-	if (-1 == (fd = open_cachedir(&r)))
-		goto out;
-
 	/*
 	 * See what kind of file we're asking for by looking it up under
 	 * the cache root.
@@ -814,7 +964,67 @@ main(void)
 	if ('/' == cp[0])
 		cp++;
 
-	rc = '\0' != cp[0] ? fstatat(fd, cp, &st, 0) : fstat(fd, &st);
+	/* Open our cache directory. */
+
+	if (-1 == (cachefd = open_cachedir(CACHEDIR, &r))) {
+		errorpage(&r, "Cannot open cache root.");
+		goto out;
+	}
+
+	/* Do we have any permissions? */
+
+	if ( ! open_users(&uq, cachefd, CACHEDIR, &r)) {
+		errorpage(&r, "Cannot process password file.");
+		goto out;
+	}
+
+	/* Open our files and auth (cookies) directory. */
+
+	if (-1 == (filefd = open_dir
+	    (cachefd, CACHEDIR, FILEDIR, &r))) {
+		errorpage(&r, "Cannot open file root.");
+		goto out;
+	}
+
+	if (-1 == (authfd = open_dir
+	    (cachefd, CACHEDIR, AUTHDIR, &r))) {
+		errorpage(&r, "Cannot open authorisation root.");
+		goto out;
+	}
+
+	/*
+	 * Now all directories have been created that need creating and,
+	 * if we're a GET request, we can drop the privilege to create
+	 * new things.
+	 */
+
+	if (KMETHOD_GET == r.method) 
+		if (-1 == pledge("rpath stdio", NULL)) {
+			kutil_warn(&r, NULL, "pledge");
+			goto out;
+		}
+
+	/*
+	 * We have users, which means we need to check for session
+	 * availability.
+	 */
+
+	if (NULL != uq) {
+		if (NULL == r.cookiemap[KEY_SESSCOOKIE] ||
+		    NULL == r.cookiemap[KEY_SESSUSER]) {
+			loginpage(&r);
+			goto out;
+		}
+	}
+
+	/*
+	 * We're logged in and ready to process the request.
+	 * Here we go!
+	 */
+
+	rc = '\0' != cp[0] ? 
+		fstatat(filefd, cp, &st, 0) : 
+		fstat(filefd, &st);
 
 	if (-1 == rc) {
 		errorpage(&r, "Requested \"%s\" "
@@ -852,9 +1062,9 @@ main(void)
 
 	if (KMETHOD_GET == r.method) {
 		if (FTYPE_DIR == ftype)
-			get_dir(fd, cp, isw, &r);
+			get_dir(filefd, cp, isw, &r);
 		else
-			get_file(fd, cp, &r);
+			get_file(filefd, cp, &r);
 	} else {
 		assert(KMETHOD_POST == r.method);
 		if (FTYPE_DIR != ftype)
@@ -862,13 +1072,30 @@ main(void)
 		else if ( ! isw)
 			errorpage(&r, "Post into readonly directory.");
 		else
-			post_op(fd, cp, &r);
+			post_op(filefd, cp, &r);
 	}
 
 out:
+	if (-1 == pledge("stdio", NULL))
+		kutil_warn(&r, NULL, "pledge");
+
+	if (NULL != uq) {
+		while (NULL != (u = TAILQ_FIRST(uq))) {
+			TAILQ_REMOVE(uq, u, entries);
+			free(u->name);
+			free(u->hash);
+			free(u);
+		}
+		free(uq);
+	}
+
 	free(path);
-	if (-1 != fd)
-		close(fd);
+	if (-1 != cachefd)
+		close(cachefd);
+	if (-1 != filefd)
+		close(filefd);
+	if (-1 != authfd)
+		close(authfd);
 	khttp_free(&r);
 	return(EXIT_SUCCESS);
 }
