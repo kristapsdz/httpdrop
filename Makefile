@@ -24,7 +24,7 @@ installwww: httpdrop
 	mkdir -p $(WWWDIR)/data
 	install -m 0444 httpdrop.css bulma.css httpdrop.js $(WWWDIR)/htdocs
 	install -m 0755 httpdrop $(WWWDIR)/cgi-bin
-	install -m 0444 httpdrop.xml loginpage.xml $(WWWDIR)/data
+	install -m 0444 page.xml loginpage.xml $(WWWDIR)/data
 
 clean:
 	rm -f httpdrop main.o

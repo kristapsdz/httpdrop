@@ -89,8 +89,18 @@ enum	loginerr {
 	LOGINERR_OK
 };
 
-struct	login {
+struct	loginpage {
 	enum loginerr	 error;
+	struct kreq	*req;
+};
+
+struct	dirpage {
+	struct fref	*frefs;
+	size_t		 frefsz;
+	size_t		 rfilesz;
+	int		 rdwr;
+	int		 root;
+	const char	*fpath;
 	struct kreq	*req;
 };
 
@@ -147,7 +157,7 @@ http_open(struct kreq *r, enum khttp code)
 static int
 loginpage_template(size_t index, void *arg)
 {
-	struct login	*l = arg;
+	struct loginpage *l = arg;
 
 	switch (index) {
 	case 0:
@@ -179,7 +189,7 @@ static void
 loginpage(struct kreq *r, enum loginerr error)
 {
 	struct ktemplate t;
-	struct login	 l;
+	struct loginpage l;
 	const char *const ts[] = { "URL", "CLASS" };
 
 	l.req = r;
@@ -283,12 +293,131 @@ fref_cmp(const void *p1, const void *p2)
 static int
 get_dir_template(size_t index, void *arg)
 {
-	struct kreq	*r = arg;
+	struct dirpage	*pg = arg;
+	struct khtmlreq	 req;
+	struct fref	*ff;
+	size_t		 i;
+	char		 classes[1024];
 
-	if (index > 0)
+	if (0 == index) {
+		khttp_puts(pg->req, pg->req->fullpath);
+		return(1);
+	} else if (1 == index) {
+		classes[0] = '\0';
+		strlcat(classes, pg->rdwr ?
+			" mutable" : " immutable", sizeof(classes));
+		strlcat(classes, pg->root ?
+			" root" : " nonroot", sizeof(classes));
+		strlcat(classes, pg->rfilesz > 0 ?
+			" nonempty" : " empty", sizeof(classes));
+		khttp_puts(pg->req, classes);
+		return(1);
+	} else if (index > 2)
 		return(0);
 
-	khttp_puts(r, r->fullpath);
+	khtml_open(&req, pg->req, KHTML_PRETTY);
+
+	if (pg->frefsz)
+		khtml_elem(&req, KELEM_UL);
+
+	for (i = 0; i < pg->frefsz; i++) {
+		ff = &pg->frefs[i];
+		khtml_elem(&req, KELEM_LI);
+		khtml_attr(&req, KELEM_A,
+			KATTR_HREF, ff->fullname, 
+			KATTR__MAX);
+		khtml_puts(&req, ff->name);
+		if (S_ISDIR(ff->st.st_mode))
+			khtml_puts(&req, "/");
+		khtml_closeelem(&req, 1);
+
+		khtml_elem(&req, KELEM_SPAN);
+		if (S_ISDIR(ff->st.st_mode)) {
+			khtml_puts(&req, "");
+		} else if (ff->st.st_size > 1024 * 1024 * 1024) {
+			khtml_int(&req, 
+				ff->st.st_size / 1024/1024/1024);
+			khtml_puts(&req, " GB");
+		} else if (ff->st.st_size > 1024 * 1024) {
+			khtml_int(&req, 
+				ff->st.st_size / 1024/1024);
+			khtml_puts(&req, " MB");
+		} else if (ff->st.st_size > 1024) {
+			khtml_int(&req, ff->st.st_size / 1024);
+			khtml_puts(&req, " KB");
+		} else {
+			khtml_int(&req, ff->st.st_size);
+			khtml_puts(&req, " B");
+		}
+		khtml_closeelem(&req, 1);
+
+		khtml_elem(&req, KELEM_SPAN);
+		khtml_puts(&req, ctime(&ff->st.st_ctim.tv_sec));
+		khtml_closeelem(&req, 1);
+
+		if (pg->rdwr && ! (S_ISDIR(ff->st.st_mode))) {
+			khtml_attr(&req, KELEM_FORM,
+				KATTR_METHOD, "post",
+				KATTR_CLASS, "icon",
+				KATTR_ACTION, pg->fpath,
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_INPUT,
+				KATTR_TYPE, "hidden",
+				KATTR_NAME, keys[KEY_OP].name,
+				KATTR_VALUE, "rmfile",
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_INPUT,
+				KATTR_TYPE, "hidden",
+				KATTR_NAME, keys[KEY_FILENAME].name,
+				KATTR_VALUE, ff->name,
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_DIV,
+				KATTR_CLASS, "field is-small",
+				KATTR__MAX);
+			/*
+			 * Disallow deletion if we don't have access
+			 * rights to the file.
+			 */
+			if ((S_IWUSR|S_IWGRP|S_IWOTH) & 
+			    ff->st.st_mode)
+				khtml_attr(&req, KELEM_BUTTON,
+					KATTR_CLASS, "button "
+						"is-danger is-outlined",
+					KATTR_TITLE, "Delete",
+					KATTR_TYPE, "submit",
+					KATTR__MAX);
+			else
+				khtml_attr(&req, KELEM_BUTTON,
+					KATTR_CLASS, "button "
+						"is-danger is-outlined",
+					KATTR_TITLE, "Delete",
+					KATTR_DISABLED, "disabled",
+					KATTR_TYPE, "submit",
+					KATTR__MAX);
+			khtml_attr(&req, KELEM_SPAN,
+				KATTR_CLASS, "icon is-small",
+				KATTR__MAX);
+			khtml_attr(&req, KELEM_I,
+				KATTR_CLASS, "fa fa-times",
+				KATTR__MAX);
+			khtml_closeelem(&req, 5);
+		}
+
+		khtml_closeelem(&req, 1);
+	}
+
+	if (0 == pg->frefsz) {
+		khtml_elem(&req, KELEM_P);
+		khtml_puts(&req, 
+			"No files or directories to list. "
+			"Time to create or upload some?");
+		khtml_closeelem(&req, 1);
+	} else {
+		khtml_closeelem(&req, 1);
+	}
+
+	khtml_closeelem(&req, 4);
+	khtml_close(&req);
 	return(1);
 }
 
@@ -306,12 +435,11 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	DIR		*dir;
 	struct dirent	*dp;
 	int		 fl = O_RDONLY | O_DIRECTORY;
-	struct khtmlreq	 req;
-	size_t		 sz = 0, filesz = 0, rfilesz = 0, i;
+	size_t		 filesz = 0, rfilesz = 0, i;
 	struct ktemplate t;
-	const char	*ts = "URL";
+	const char *const ts[] = { "URL", "CLASSES", "FILES" };
 	struct fref	*files = NULL;
-	const struct fref *ff;
+	struct dirpage	 dirpage;
 
 	if ('\0' != path[0]) {
 		if (-1 == (nfd = openat(fd, path, fl, 0)))
@@ -373,179 +501,28 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	kasprintf(&fpath, "%s/%s%s", r->pname, 
 		path, '\0' != path[0] ? "/" : "");
 
+	dirpage.frefs = files;
+	dirpage.frefsz = filesz;
+	dirpage.rfilesz = rfilesz;
+	dirpage.rdwr = rdwr;
+	dirpage.fpath = fpath;
+	dirpage.req = r;
+	dirpage.root = '\0' == path[0];
+
 	/*
 	 * No more errors reported.
 	 * Print all of our entities along with a header allowing us to
 	 * upload more files.
 	 */
 
-	http_open(r, KHTTP_200);
-	khtml_open(&req, r, KHTML_PRETTY);
-	khtml_elem(&req, KELEM_DOCTYPE);
-
-	khtml_attr(&req, KELEM_HTML,
-		KATTR_LANG, "en",
-		KATTR__MAX);
-	khtml_elem(&req, KELEM_HEAD);
-	khtml_attr(&req, KELEM_META,
-		KATTR_CHARSET, "utf-8",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_META,
-		KATTR_NAME, "viewport",
-		KATTR_CONTENT, "width=device-width, initial-scale=1",
-		KATTR__MAX);
-	khtml_elem(&req, KELEM_TITLE);
-	khtml_puts(&req, "Directory listing");
-	khtml_closeelem(&req, 1);
-	khtml_attr(&req, KELEM_LINK,
-		KATTR_HREF, HTURI "bulma.css",
-		KATTR_REL, "stylesheet",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_LINK,
-		KATTR_HREF, FONT_AWESOME_URL,
-		KATTR_REL, "stylesheet",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_LINK,
-		KATTR_HREF, HTURI "httpdrop.css",
-		KATTR_REL, "stylesheet",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_SCRIPT,
-		KATTR_SRC, HTURI "httpdrop.js",
-		KATTR__MAX);
-	khtml_closeelem(&req, 2);
-
-	/*
-	 * If the current directory has write permissions, note this as
-	 * our body class so that children can configure themselves.
-	 */
-
-	khtml_attr(&req, KELEM_BODY,
-		KATTR_CLASS, 
-			rdwr && rfilesz > 0 ? 
-			"mutable nonempty" :
-			rdwr && 0 == rfilesz ?
-			"mutable empty" :
-			0 == rdwr && rfilesz > 0 ?
-			"immutable nonempty" :
-			"immutable empty",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_SECTION,
-		KATTR_CLASS, "section",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_DIV,
-		KATTR_CLASS, "container",
-		KATTR__MAX);
-
-	if (filesz)
-		khtml_elem(&req, KELEM_UL);
-
-	for (i = 0; i < filesz; i++) {
-		ff = &files[i];
-		khtml_elem(&req, KELEM_LI);
-		khtml_attr(&req, KELEM_A,
-			KATTR_HREF, ff->fullname, 
-			KATTR__MAX);
-		khtml_puts(&req, ff->name);
-		if (S_ISDIR(ff->st.st_mode))
-			khtml_puts(&req, "/");
-		khtml_closeelem(&req, 1);
-
-		khtml_elem(&req, KELEM_SPAN);
-		if (S_ISDIR(ff->st.st_mode)) {
-			khtml_puts(&req, "");
-		} else if (ff->st.st_size > 1024 * 1024 * 1024) {
-			khtml_int(&req, 
-				ff->st.st_size / 1024/1024/1024);
-			khtml_puts(&req, " GB");
-		} else if (ff->st.st_size > 1024 * 1024) {
-			khtml_int(&req, 
-				ff->st.st_size / 1024/1024);
-			khtml_puts(&req, " MB");
-		} else if (ff->st.st_size > 1024) {
-			khtml_int(&req, ff->st.st_size / 1024);
-			khtml_puts(&req, " KB");
-		} else {
-			khtml_int(&req, ff->st.st_size);
-			khtml_puts(&req, " B");
-		}
-		khtml_closeelem(&req, 1);
-
-		khtml_elem(&req, KELEM_SPAN);
-		khtml_puts(&req, ctime(&ff->st.st_ctim.tv_sec));
-		khtml_closeelem(&req, 1);
-
-		if (rdwr && ! (S_ISDIR(ff->st.st_mode))) {
-			khtml_attr(&req, KELEM_FORM,
-				KATTR_METHOD, "post",
-				KATTR_CLASS, "icon",
-				KATTR_ACTION, fpath,
-				KATTR__MAX);
-			khtml_attr(&req, KELEM_INPUT,
-				KATTR_TYPE, "hidden",
-				KATTR_NAME, keys[KEY_OP].name,
-				KATTR_VALUE, "rmfile",
-				KATTR__MAX);
-			khtml_attr(&req, KELEM_INPUT,
-				KATTR_TYPE, "hidden",
-				KATTR_NAME, keys[KEY_FILENAME].name,
-				KATTR_VALUE, ff->name,
-				KATTR__MAX);
-			khtml_attr(&req, KELEM_DIV,
-				KATTR_CLASS, "field is-small",
-				KATTR__MAX);
-			/*
-			 * Disallow deletion if we don't have access
-			 * rights to the file.
-			 */
-			if ((S_IWUSR|S_IWGRP|S_IWOTH) & 
-			    ff->st.st_mode)
-				khtml_attr(&req, KELEM_BUTTON,
-					KATTR_CLASS, "button "
-						"is-danger is-outlined",
-					KATTR_TITLE, "Delete",
-					KATTR_TYPE, "submit",
-					KATTR__MAX);
-			else
-				khtml_attr(&req, KELEM_BUTTON,
-					KATTR_CLASS, "button "
-						"is-danger is-outlined",
-					KATTR_TITLE, "Delete",
-					KATTR_DISABLED, "disabled",
-					KATTR_TYPE, "submit",
-					KATTR__MAX);
-			khtml_attr(&req, KELEM_SPAN,
-				KATTR_CLASS, "icon is-small",
-				KATTR__MAX);
-			khtml_attr(&req, KELEM_I,
-				KATTR_CLASS, "fa fa-times",
-				KATTR__MAX);
-			khtml_closeelem(&req, 5);
-		}
-
-		khtml_closeelem(&req, 1);
-		sz++;
-	}
-
-	if (0 == filesz) {
-		khtml_elem(&req, KELEM_P);
-		khtml_puts(&req, 
-			"No files or directories to list. "
-			"Time to create or upload some?");
-		khtml_closeelem(&req, 1);
-	} else {
-		khtml_closeelem(&req, 1);
-	}
-
 	memset(&t, 0, sizeof(struct ktemplate));
-	t.key = &ts;
-	t.keysz = 1;
-	t.arg = r;
+	t.key = ts;
+	t.keysz = 3;
+	t.arg = &dirpage;
 	t.cb = get_dir_template;
 
-	khtml_closeelem(&req, 1);
-	khttp_template(r, &t, DATADIR "/httpdrop.xml");
-	khtml_closeelem(&req, 3);
-	khtml_close(&req);
+	http_open(r, KHTTP_200);
+	khttp_template(r, &t, DATADIR "/page.xml");
 
 	free(fpath);
 	for (i = 0; i < filesz; i++) {
@@ -598,7 +575,8 @@ send_301_path(struct kreq *r, const char *fullpath)
 {
 	char	*np, *path;
 
-	kasprintf(&path, "%s%s", r->pname, fullpath);
+	kasprintf(&path, "%s%s%s", r->pname, 
+		'/' != fullpath[0] ? "/" : "", fullpath);
 	np = kutil_urlabs(r->scheme, r->host, r->port, path);
 	free(path);
 
@@ -663,9 +641,11 @@ post_op_rmdir(int fd, const char *path, struct kreq *r)
 		errorpage(r, "Cannot remove \"%s\".", path);
 	} else {
 		kutil_info(r, NULL, "%s: unlink (dir)", path);
-		newpath = kstrdup(r->fullpath);
+		newpath = kstrdup(path);
 		if (NULL != (cp = strrchr(newpath, '/')))
 			*cp = '\0';
+		else
+			newpath[0] = '\0';
 		send_301_path(r, newpath);
 		free(newpath);
 	}

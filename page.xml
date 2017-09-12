@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Directory listing</title>
+		<link href="/bulma.css" rel="stylesheet" />
+		<link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" />
+		<link href="/httpdrop.css" rel="stylesheet" />
+		<script src="/httpdrop.js"></script>
+	</head>
+	<!--
+	     This is the template header (HTML5 fragment) for httpdrop.
+	     It's printed after the directory listing part.
+	     The URL template key is replaced with the current directory.
+	     The encompassing <body> will have a "mutable" if the current
+	     directory is writable; else, "immutable".
+	 -->
+	<body class="@@CLASSES@@">
+		<section class="section">
+			<div class="container">
+				@@FILES@@
+			</div>
+			<div class="container has-mutable">
+				<form id="form-rmdir" action="/cgi-bin/httpdrop@@URL@@" method="post" class="is-nonroot">
+					<div class="is-empty field is-horizontal">
+						<input type="hidden" name="op" value="rmdir" />
+						<div class="field-label is-normal">
+							<label class="label">Directory is empty.  Remove?</label>
+						</div>
+						<div class="field-body">
+							<div class="field is-grouped">
+								<div class="control">
+									<button class="button is-primary" type="submit">Delete</button>
+								</div>
+							</div>
+						</div>
+					</div>
+				</form>
+				<form action="/cgi-bin/httpdrop@@URL@@" method="post" enctype="multipart/form-data" id="file-uploader">
+					<input type="hidden" name="op" value="mkfile" />
+					<div class="field is-grouped">
+						<div class="control">
+							<div class="file has-name">
+								<label class="file-label">
+									<input required="required" class="file-input" type="file" name="file" id="file-name-input" />
+									<span class="file-cta">
+										<span class="file-icon">
+											<i class="fa fa-upload"></i>
+										</span>
+										<span class="file-label">
+											Choose a file&#8230;
+										</span>
+									</span>
+									<span class="file-name" id="file-name-text">
+										<span id="file-name-no-file"><i class="fa fa-square-o"></i></span>
+										<span id="file-name-has-file"><i class="fa fa-check-square-o"></i></span>
+									</span>
+								</label>
+							</div>
+						</div>
+						<div class="control">
+							<button id="file-uploader-button" class="button is-primary" type="submit">Upload</button>
+						</div>
+					</div>
+				</form>
+				<form action="/cgi-bin/httpdrop@@URL@@" method="post">
+					<input type="hidden" name="op" value="mkdir" />
+					<div class="field is-grouped">
+						<div class="control is-expanded">
+							<input required="required" type="text" placeholder="Create folder" name="dir" class="input is-fullwidth" />
+						</div>
+						<div class="control">
+							<button class="button is-primary" type="submit">Create</button>
+						</div>
+					</div>
+				</form>
+			</div>
+			<div class="container has-immutable">
+			</div>
+		</section>
+	</body>
+</html>
+
