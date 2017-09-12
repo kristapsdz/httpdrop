@@ -17,10 +17,6 @@
 #include <kcgi.h>
 #include <kcgihtml.h>
 
-#define	FONT_AWESOME_URL \
-	"https://maxcdn.bootstrapcdn.com/" \
-	"font-awesome/4.7.0/css/font-awesome.min.css"
-
 #ifndef	CACHEDIR
 # define CACHEDIR "/cache/httpdrop"
 #endif
@@ -64,6 +60,13 @@ enum	ftype {
 	FTYPE_OTHER
 };
 
+enum	loginerr {
+	LOGINERR_NOFIELD, /* HTML field not filled in */
+	LOGINERR_BADCREDS, /* bad username/password */
+	LOGINERR_SYSERR, /* system error */
+	LOGINERR_OK
+};
+
 /*
  * A file reference used for listing directory contents.
  */
@@ -82,29 +85,36 @@ struct	user {
 	TAILQ_ENTRY(user) entries;
 };
 
-enum	loginerr {
-	LOGINERR_NOFIELD,
-	LOGINERR_BADCREDS,
-	LOGINERR_SYSERR,
-	LOGINERR_OK
-};
-
-struct	loginpage {
-	enum loginerr	 error;
-	struct kreq	*req;
-};
-
-struct	dirpage {
-	struct fref	*frefs;
-	size_t		 frefsz;
-	size_t		 rfilesz;
-	int		 rdwr;
-	int		 root;
-	const char	*fpath;
-	struct kreq	*req;
-};
-
 TAILQ_HEAD(userq, user);
+
+/*
+ * Used for login page template.
+ */
+struct	loginpage {
+	enum loginerr	 error; /* login page error */
+	struct kreq	*req; /* HTTP request */
+};
+
+/*
+ * Used for regular directory page listing template.
+ */
+struct	dirpage {
+	struct fref	*frefs; /* file references */
+	size_t		 frefsz; /* all file count */
+	size_t		 rfilesz; /* regular file count */
+	int		 rdwr; /* is read-writable? */
+	int		 root; /* is document root? */
+	const char	*fpath; /* request path w/script name */
+	struct kreq	*req; /* HTTP request */
+};
+
+/*
+ * Used for error page template.
+ */
+struct	errorpage {
+	const char	*msg; /* error message */
+	struct kreq	*req; /* HTTP request */
+};
 
 static const char *const pages[PAGE__MAX] = {
 	"index", /* PAGE_INDEX */
@@ -204,71 +214,45 @@ loginpage(struct kreq *r, enum loginerr error)
 	khttp_template(r, &t, DATADIR "/loginpage.xml");
 }
 
+static int
+errorpage_template(size_t index, void *arg)
+{
+	struct errorpage *pg = arg;
+	struct khtmlreq	  req;
+
+	if (index)
+		return(0);
+
+	khtml_open(&req, pg->req, KHTML_PRETTY);
+	khtml_puts(&req, pg->msg);
+	khtml_close(&req);
+	return(1);
+}
+
 static void
 errorpage(struct kreq *r, const char *fmt, ...)
 {
-	struct khtmlreq	 req;
+	struct errorpage pg;
 	char		*buf;
 	va_list		 ap;
+	struct ktemplate t;
+	const char *const ts[] = { "MESSAGE" };
 
 	va_start(ap, fmt);
 	if (-1 == vasprintf(&buf, fmt, ap))
 		exit(EXIT_FAILURE);
 	va_end(ap);
 
+	pg.msg = buf;
+	pg.req = r;
+
+	memset(&t, 0, sizeof(struct ktemplate));
+	t.key = ts;
+	t.keysz = 1;
+	t.arg = &pg;
+	t.cb = errorpage_template;
 	http_open(r, KHTTP_200);
-	khtml_open(&req, r, KHTML_PRETTY);
-	khtml_elem(&req, KELEM_DOCTYPE);
-	khtml_attr(&req, KELEM_HTML,
-		KATTR_LANG, "en",
-		KATTR__MAX);
-	khtml_elem(&req, KELEM_HEAD);
-	khtml_attr(&req, KELEM_META,
-		KATTR_CHARSET, "utf-8",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_META,
-		KATTR_NAME, "viewport",
-		KATTR_CONTENT, "width=device-width, initial-scale=1",
-		KATTR__MAX);
-	khtml_elem(&req, KELEM_TITLE);
-	khtml_puts(&req, "Error");
-	khtml_closeelem(&req, 1);
-	khtml_attr(&req, KELEM_LINK,
-		KATTR_HREF, HTURI "bulma.css",
-		KATTR_REL, "stylesheet",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_LINK,
-		KATTR_HREF, FONT_AWESOME_URL,
-		KATTR_REL, "stylesheet",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_LINK,
-		KATTR_HREF, HTURI "httpdrop.css",
-		KATTR_REL, "stylesheet",
-		KATTR__MAX);
-	khtml_closeelem(&req, 1);
-	khtml_attr(&req, KELEM_BODY,
-		KATTR_CLASS, "errorpage",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_SECTION,
-		KATTR_CLASS, "hero is-danger is-fullheight",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_DIV,
-		KATTR_CLASS, "hero-body",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_DIV,
-		KATTR_CLASS, "container",
-		KATTR__MAX);
-	khtml_attr(&req, KELEM_H1,
-		KATTR_CLASS, "title",
-		KATTR__MAX);
-	khtml_puts(&req, "Error");
-	khtml_closeelem(&req, 1);
-	khtml_attr(&req, KELEM_H2,
-		KATTR_CLASS, "subtitle",
-		KATTR__MAX);
-	khtml_puts(&req, buf);
-	khtml_closeelem(&req, 6);
-	khtml_close(&req);
+	khttp_template(r, &t, DATADIR "/errorpage.xml");
 	free(buf);
 }
 
@@ -405,6 +389,8 @@ get_dir_template(size_t index, void *arg)
 
 		khtml_closeelem(&req, 1);
 	}
+
+	/* XXX: use CSS ids/subclassing and keep in XML. */
 
 	if (0 == pg->frefsz) {
 		khtml_elem(&req, KELEM_P);

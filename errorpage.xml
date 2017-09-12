@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Error</title>
+		<link href="/bulma.css" rel="stylesheet" />
+		<link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" />
+		<link href="/httpdrop.css" rel="stylesheet" />
+	</head>
+	<body class="errorpage">
+		<section class="hero is-danger is-fullheight">
+			<div class="hero-body">
+				<div class="container">
+					<h1 class="title">Error</h1>
+					<h2 class="subtitle">@@MESSAGE@@</h2>
+				</div>
+			</div>
+		</section>
+	</body>
+</html>
+
