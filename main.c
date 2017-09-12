@@ -6,6 +6,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -35,11 +36,22 @@ enum	page {
 	PAGE__MAX
 };
 
+enum	action {
+	ACTION_GET,
+	ACTION_LOGIN,
+	ACTION_MKDIR,
+	ACTION_MKFILE,
+	ACTION_RMDIR,
+	ACTION_RMFILE,
+	ACTION__MAX
+};
+
 enum	key {
 	KEY_DIR,
 	KEY_FILE,
 	KEY_FILENAME,
 	KEY_OP,
+	KEY_USER,
 	KEY_SESSCOOKIE,
 	KEY_SESSUSER,
 	KEY__MAX
@@ -69,6 +81,18 @@ struct	user {
 	TAILQ_ENTRY(user) entries;
 };
 
+enum	loginerr {
+	LOGINERR_NOFIELD,
+	LOGINERR_BADCREDS,
+	LOGINERR_SYSERR,
+	LOGINERR_OK
+};
+
+struct	login {
+	enum loginerr	 error;
+	struct kreq	*req;
+};
+
 TAILQ_HEAD(userq, user);
 
 static const char *const pages[PAGE__MAX] = {
@@ -80,6 +104,7 @@ static const struct kvalid keys[KEY__MAX] = {
 	{ NULL, "file" }, /* KEY_FILE */
 	{ kvalid_stringne, "filename" }, /* KEY_FILENAME */
 	{ kvalid_stringne, "op" }, /* KEY_OP */
+	{ kvalid_stringne, "user" }, /* KEY_USER */
 	{ kvalid_int, "stok" }, /* KEY_SESSCOOKIE */
 	{ kvalid_stringne, "suser" }, /* KEY_SESSUSER */
 };
@@ -120,25 +145,48 @@ http_open(struct kreq *r, enum khttp code)
 static int
 loginpage_template(size_t index, void *arg)
 {
-	struct kreq	*r = arg;
+	struct login	*l = arg;
 
-	if (index > 0)
+	switch (index) {
+	case 0:
+		khttp_puts(l->req, l->req->fullpath);
+		break;
+	case 1:
+		switch (l->error) {
+		case LOGINERR_BADCREDS:
+			khttp_puts(l->req, "error-badcreds");
+			break;
+		case LOGINERR_NOFIELD:
+			khttp_puts(l->req, "error-nofield");
+			break;
+		case LOGINERR_SYSERR:
+			khttp_puts(l->req, "error-syserr");
+			break;
+		default:
+			break;
+		}
+		break;
+	default:
 		return(0);
+	}
 
-	khttp_puts(r, r->fullpath);
 	return(1);
 }
 
 static void
-loginpage(struct kreq *r)
+loginpage(struct kreq *r, enum loginerr error)
 {
 	struct ktemplate t;
-	const char	*ts = "URL";
+	struct login	 l;
+	const char *const ts[] = { "URL", "CLASS" };
+
+	l.req = r;
+	l.error = error;
 
 	memset(&t, 0, sizeof(struct ktemplate));
-	t.key = &ts;
-	t.keysz = 1;
-	t.arg = r;
+	t.key = ts;
+	t.keysz = 2;
+	t.arg = &l;
 	t.cb = loginpage_template;
 	http_open(r, KHTTP_200);
 	khttp_template(r, &t, DATADIR "loginpage.xml");
@@ -680,38 +728,30 @@ post_op_mkfile(int nfd, const char *path,
  * This routes to either post_op_mkfile or post_op_mkdir.
  */
 static void
-post_op(int fd, const char *path, struct kreq *r)
+post_op_file(int fd, const char *path, 
+	enum action act, struct kreq *r)
 {
-	struct kpair	*kp, *kpf;
+	struct kpair	*kpf;
 	int		 nfd = -1;
 	int		 dfl = O_RDONLY|O_DIRECTORY;
 	const char	*target;
 
 	/* Start with validation. */
 
-	if (NULL == (kp = r->fieldmap[KEY_OP]) ||
-	    (strcmp(kp->parsed.s, "mkfile") &&
-	     strcmp(kp->parsed.s, "rmfile") &&
-	     strcmp(kp->parsed.s, "rmdir") &&
-	     strcmp(kp->parsed.s, "mkdir"))) {
-		errorpage(r, "Unknown file operation.");
-		return;
-	} 
-
-	if (0 == strcmp(kp->parsed.s, "mkfile") &&
+	if (ACTION_MKFILE == act &&
 	    (NULL == r->fieldmap[KEY_FILE] ||
 	     '\0' == r->fieldmap[KEY_FILE]->file[0])) {
 		send_301(r);
 		return;
 	} 
 
-	if (0 == strcmp(kp->parsed.s, "rmfile") &&
+	if (ACTION_RMFILE == act &&
 	    NULL == r->fieldmap[KEY_FILENAME]) {
 		send_301(r);
 		return;
 	}
 
-	if (0 == strcmp(kp->parsed.s, "mkdir") &&
+	if (ACTION_MKDIR == act &&
 	    NULL == r->fieldmap[KEY_DIR]) {
 		send_301(r);
 		return;
@@ -719,11 +759,11 @@ post_op(int fd, const char *path, struct kreq *r)
 
 	/* What we're working with. */
 
-	target = 0 == strcmp(kp->parsed.s, "mkfile") ?
+	target = ACTION_MKFILE == act ?
 		r->fieldmap[KEY_FILE]->file :
-		0 == strcmp(kp->parsed.s, "rmfile") ?
+		ACTION_RMFILE == act ?
 		r->fieldmap[KEY_FILENAME]->parsed.s :
-		0 == strcmp(kp->parsed.s, "mkdir") ?
+		ACTION_MKDIR == act ?
 		r->fieldmap[KEY_DIR]->parsed.s : NULL;
 
 	if (NULL != target &&
@@ -747,13 +787,13 @@ post_op(int fd, const char *path, struct kreq *r)
 
 	/* Now actually perform our operations. */
 
-	if (0 == strcmp(kp->parsed.s, "mkfile")) {
+	if (ACTION_MKFILE == act) {
 		kpf = r->fieldmap[KEY_FILE];
 		post_op_mkfile(nfd, path, target, 
 			kpf->val, kpf->valsz, r);
-	} else if (0 == strcmp(kp->parsed.s, "rmfile")) {
+	} else if (ACTION_RMFILE == act) {
 		post_op_rmfile(nfd, path, target, r);
-	} else if (0 == strcmp(kp->parsed.s, "rmdir")) {
+	} else if (ACTION_RMDIR == act) {
 		post_op_rmdir(fd, path, r);
 	} else  {
 		post_op_mkdir(nfd, path, target, r);
@@ -761,6 +801,61 @@ post_op(int fd, const char *path, struct kreq *r)
 out:
 	if (-1 != nfd)
 		close(nfd);
+}
+
+static void
+post_op_login(int authfd, const char *authpath, 
+	const struct userq *uq, struct kreq *r)
+{
+	int	 	 fd;
+	const char	*name;
+	char		 buf[1024];
+	const struct user *u;
+	int64_t		 cookie = 12345;
+
+	if (NULL == r->fieldmap[KEY_USER]) {
+		loginpage(r, LOGINERR_NOFIELD);
+		return;
+	}
+	name = r->fieldmap[KEY_USER]->parsed.s;
+
+	TAILQ_FOREACH(u, uq, entries)
+		if (0 == strcmp(u->name, name))
+			break;
+
+	if (NULL == u) {
+		kutil_warnx(r, NULL, "user not found: %s", name);
+		loginpage(r, LOGINERR_BADCREDS);
+		return;
+	}
+
+	snprintf(buf, sizeof(buf), "%" PRId64 "\n", cookie);
+
+	fd = openat(authfd, name, 
+		O_CREAT | O_RDWR | O_TRUNC, 0600);
+	if (-1 == fd) {
+		kutil_warn(r, NULL, "%s/%s", authpath, name);
+		loginpage(r, LOGINERR_SYSERR);
+		return;
+	}
+	if (write(fd, buf, strlen(buf)) < 0) {
+		kutil_warn(r, NULL, "%s/%s", authpath, name);
+		loginpage(r, LOGINERR_SYSERR);
+		close(fd);
+		return;
+	}
+	close(fd);
+	kutil_info(r, name, "user logged in");
+	kutil_epoch2str
+		(time(NULL) + 60 * 60 * 24 * 365,
+		 buf, sizeof(buf));
+	khttp_head(r, kresps[KRESP_SET_COOKIE],
+		"%s=%" PRId64 "; HttpOnly; path=/; expires=%s", 
+		keys[KEY_SESSCOOKIE].name, cookie, buf);
+	khttp_head(r, kresps[KRESP_SET_COOKIE],
+		"%s=%s; HttpOnly; path=/; expires=%s", 
+		keys[KEY_SESSUSER].name, name, buf);
+	send_301(r);
 }
 
 /*
@@ -820,6 +915,7 @@ open_users(struct userq **uq,
 	struct user	*u;
 
 	fd = openat(cfd, ".htpasswd", O_RDONLY, 0);
+
 	if (-1 == fd && ENOENT != errno) {
 		kutil_warn(r, NULL, "%s/.htpasswd: open", cache);
 		return(0);
@@ -834,8 +930,6 @@ open_users(struct userq **uq,
 
 	*uq = kmalloc(sizeof(struct userq));
 	TAILQ_INIT(*uq);
-
-	kutil_info(r, NULL, "%s/.htpasswd: using passwords", cache);
 
 	while (NULL != (buf = fgetln(f, &len))) {
 		if ('\n' != buf[len - 1])
@@ -854,7 +948,6 @@ open_users(struct userq **uq,
 		u->hash = kstrdup(pass);
 		TAILQ_INSERT_TAIL(*uq, u, entries);
 		line++;
-		kutil_info(r, NULL, "%s/.htpasswd: %s, %s", cache, user, pass);
 	}
 
 	fclose(f);
@@ -898,6 +991,60 @@ open_cachedir(const char *root, struct kreq *r)
 	return(fd);
 }
 
+/*
+ * Look in "dir" (opened as "fd") for the cookie registered to the
+ * current user (who must exist) and cross-check its unique token.
+ * Returns zero on failure, non-zero on success.
+ */
+static int
+check_login(struct kreq *r, 
+	const struct userq *uq, int fd, const char *dir) 
+{
+	const char	*name;
+	int		 nfd;
+	FILE		*f;
+	int64_t		 cookie, ccookie;
+	const struct user *u;
+
+	assert(NULL != r->cookiemap[KEY_SESSCOOKIE]);
+	assert(NULL != r->cookiemap[KEY_SESSUSER]);
+	name = r->cookiemap[KEY_SESSUSER]->parsed.s;
+	cookie = r->cookiemap[KEY_SESSCOOKIE]->parsed.i;
+
+	/* Loop for user in known users. */
+
+	TAILQ_FOREACH(u, uq, entries)
+		if (0 == strcasecmp(u->name, name))
+			break;
+
+	if (NULL == u) {
+		kutil_warnx(r, NULL, "unknown user: %s", name);
+		return(0);
+	}
+
+	if (-1 == (nfd = openat(fd, name, O_RDONLY, 0))) {
+		kutil_warn(r, NULL, "%s/%s", dir, name);
+		return(0);
+	}
+
+	if (NULL == (f = fdopen(nfd, "r"))) {
+		kutil_warn(r, NULL, "%s/%s", dir, name);
+		close(nfd);
+		return(0);
+	} else if (1 != fscanf(f, "%" PRId64, &ccookie)) {
+		kutil_warnx(r, NULL, "%s/%s: malformed", dir, name);
+		fclose(f);
+		return(0);
+	}
+
+	fclose(f);
+	
+	if (cookie != ccookie)
+		kutil_warn(r, name, "cookie token mismatch");
+
+	return(cookie == ccookie);
+}
+
 int
 main(void)
 {
@@ -911,12 +1058,17 @@ main(void)
 	struct stat	 st;
 	struct userq	*uq = NULL;
 	struct user	*u;
+	struct kpair	*kp;
+	enum action	 act = ACTION__MAX;
 
 	/* Log into a separate logfile (not system log). */
 
 	kutil_openlog(LOGFILE);
 
-	/* Actually parse HTTP document. */
+	/* 
+	 * Actually parse HTTP document.
+	 * Then drop privileges to only have file-system access.
+	 */
 
 	er = khttp_parse(&r, keys, KEY__MAX, 
 		pages, PAGE__MAX, PAGE_INDEX);
@@ -942,20 +1094,16 @@ main(void)
 		goto out;
 	}
 
-	/* Security: don't let us request a relative path. */
+	/* 
+	 * Security: don't let us request a relative path.
+	 * Then force to be relative and strip trailing slashes.
+	 */
 
 	if (NULL != strstr(r.fullpath, "/..") ||
 	    ('\0' != r.fullpath[0] && '/' != r.fullpath[0])) {
-		errorpage(&r, "Security violation in path name.");
+		errorpage(&r, "Security violation in requested path.");
 		goto out;
 	} 
-
-	/*
-	 * See what kind of file we're asking for by looking it up under
-	 * the cache root.
-	 * Disallow non-regular or directory files.
-	 * Force it to be relative and strip any trailing slashes.
-	 */
 
 	path = kstrdup(r.fullpath);
 	if ('\0' != path[0] && '/' == path[strlen(path) - 1])
@@ -964,21 +1112,17 @@ main(void)
 	if ('/' == cp[0])
 		cp++;
 
-	/* Open our cache directory. */
+	/* Open files/directories: cache, cookies, files. */
 
 	if (-1 == (cachefd = open_cachedir(CACHEDIR, &r))) {
 		errorpage(&r, "Cannot open cache root.");
 		goto out;
 	}
 
-	/* Do we have any permissions? */
-
 	if ( ! open_users(&uq, cachefd, CACHEDIR, &r)) {
 		errorpage(&r, "Cannot process password file.");
 		goto out;
 	}
-
-	/* Open our files and auth (cookies) directory. */
 
 	if (-1 == (filefd = open_dir
 	    (cachefd, CACHEDIR, FILEDIR, &r))) {
@@ -992,34 +1136,69 @@ main(void)
 		goto out;
 	}
 
-	/*
-	 * Now all directories have been created that need creating and,
-	 * if we're a GET request, we can drop the privilege to create
-	 * new things.
+	/* 
+	 * Now figure out what we're supposed to do here.
+	 * This will sanitise our request action.
+	 * Then switch on those actions.
 	 */
 
-	if (KMETHOD_GET == r.method) 
+	if (KMETHOD_GET != r.method) {
+		if (NULL == (kp = r.fieldmap[KEY_OP])) 
+			act = ACTION__MAX;
+		else if (0 == strcmp(kp->parsed.s, "mkfile"))
+			act = ACTION_MKFILE;
+		else if (0 == strcmp(kp->parsed.s, "rmfile"))
+			act = ACTION_RMFILE;
+		else if (0 == strcmp(kp->parsed.s, "rmdir"))
+			act = ACTION_RMDIR;
+		else if (0 == strcmp(kp->parsed.s, "mkdir"))
+			act = ACTION_MKDIR;
+		else if (0 == strcmp(kp->parsed.s, "login"))
+			act = ACTION_LOGIN;
+	} else
+		act = ACTION_GET;
+
+	if (ACTION__MAX == act) {
+		errorpage(&r, "Unspecified operation.");
+		goto out;
+	}
+
+	/* Getting (readonly): drop privileges. */
+
+	if (ACTION_GET == act)
 		if (-1 == pledge("rpath stdio", NULL)) {
 			kutil_warn(&r, NULL, "pledge");
+			errorpage(&r, "System error.");
 			goto out;
 		}
 
-	/*
-	 * We have users, which means we need to check for session
-	 * availability.
-	 */
+	/* Logging in: jump straight to login page. */
 
-	if (NULL != uq) {
-		if (NULL == r.cookiemap[KEY_SESSCOOKIE] ||
-		    NULL == r.cookiemap[KEY_SESSUSER]) {
-			loginpage(&r);
-			goto out;
-		}
+	if (ACTION_LOGIN == act) {
+		post_op_login(authfd, AUTHDIR, uq, &r);
+		goto out;
 	}
 
 	/*
-	 * We're logged in and ready to process the request.
-	 * Here we go!
+	 * We know what we want to do, but not whether we can.
+	 * If we have users, check for session availability.
+	 * If we don't have a session, or the session is a bad one, then
+	 * kick us to the login page.
+	 */
+
+	if (NULL != uq)
+		if (NULL == r.cookiemap[KEY_SESSCOOKIE] ||
+		    NULL == r.cookiemap[KEY_SESSUSER] ||
+		    ! check_login(&r, uq, authfd, AUTHDIR)) {
+			loginpage(&r, LOGINERR_OK);
+			goto out;
+		}
+
+	/*
+	 * See what kind of resource we're asking for by looking it up
+	 * under the cache root.
+	 * Disallow non-regular or directory files.
+	 * FIXME: do permission checks now.
 	 */
 
 	rc = '\0' != cp[0] ? 
@@ -1027,8 +1206,7 @@ main(void)
 		fstat(filefd, &st);
 
 	if (-1 == rc) {
-		errorpage(&r, "Requested \"%s\" "
-			"not found or unavailable.", cp);
+		errorpage(&r, "Resource not found or unavailable.");
 		goto out;
 	}
 
@@ -1039,18 +1217,6 @@ main(void)
 	else
 		ftype = FTYPE_OTHER;
 
-	/*
-	 * We need to be a regular file or a directory.
-	 * If we're a directory, we need execute access for our user.
-	 */
-
-	if (FTYPE_OTHER == ftype || (FTYPE_DIR && 
-	     ! ((S_IXUSR|S_IXGRP|S_IXOTH) & st.st_mode))) {
-		errorpage(&r, "Requested \"%s\" "
-			"not found or unavailable.", cp);
-		goto out;
-	} 
-
 	isw = (S_IWUSR|S_IWGRP|S_IWOTH) & st.st_mode;
 
 	/*
@@ -1060,22 +1226,23 @@ main(void)
 	 * directory) and reload.
 	 */
 
-	if (KMETHOD_GET == r.method) {
+	if (ACTION_GET == act) {
 		if (FTYPE_DIR == ftype)
 			get_dir(filefd, cp, isw, &r);
 		else
 			get_file(filefd, cp, &r);
 	} else {
-		assert(KMETHOD_POST == r.method);
 		if (FTYPE_DIR != ftype)
 			errorpage(&r, "Post into a regular file.");
 		else if ( ! isw)
 			errorpage(&r, "Post into readonly directory.");
 		else
-			post_op(filefd, cp, &r);
+			post_op_file(filefd, cp, act, &r);
 	}
 
 out:
+	/* Drop privileges and free memory. */
+
 	if (-1 == pledge("stdio", NULL))
 		kutil_warn(&r, NULL, "pledge");
 
