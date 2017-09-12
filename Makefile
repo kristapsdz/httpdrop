@@ -7,6 +7,7 @@ WWWDIR	 = /var/www
 DATADIR	 = /data
 LOGFILE	 = /logs/httpdrop-system.log
 CACHEDIR = /cache/httpdrop
+SECURE	 = -DSECURE
 
 sinclude Makefile.local
 
@@ -14,6 +15,7 @@ CFLAGS	+= -DHTURI=\"$(HTURI)\"
 CFLAGS	+= -DDATADIR=\"$(DATADIR)\"
 CFLAGS	+= -DLOGFILE=\"$(LOGFILE)\"
 CFLAGS	+= -DCACHE=\"$(CACHEDIR)\"
+CFLAGS	+= $(SECURE)
 
 httpdrop: main.o
 	$(CC) -static -o $@ main.o $(LDFLAGS) -lkcgi -lkcgihtml -lz

@@ -776,7 +776,7 @@ post_op_login(int authfd, const char *authpath,
 	const struct userq *uq, struct kreq *r)
 {
 	int	 	 fd;
-	const char	*name, *pass;
+	const char	*name, *pass, *secure;
 	char		 buf[1024];
 	const struct user *u;
 	int64_t		 cookie;
@@ -786,6 +786,12 @@ post_op_login(int authfd, const char *authpath,
 		loginpage(r, LOGINERR_NOFIELD);
 		return;
 	}
+
+	/*
+	 * Look up the username, make sure it exists, then check against
+	 * the given hash using the crypt_checkpass function, which does
+	 * the heavy lefting for us.
+	 */
 
 	name = r->fieldmap[KEY_USER]->parsed.s;
 	pass = r->fieldmap[KEY_PASSWD]->parsed.s;
@@ -804,6 +810,11 @@ post_op_login(int authfd, const char *authpath,
 		return;
 	}
 
+	/*
+	 * Create a random cookie (session token) and overwrite whatever
+	 * is currently in our cookie file, if at all.
+	 */
+
 	cookie = arc4random();
 	snprintf(buf, sizeof(buf), "%" PRId64 "\n", cookie);
 
@@ -821,16 +832,25 @@ post_op_login(int authfd, const char *authpath,
 		return;
 	}
 	close(fd);
+
+	/* Set our cookie and limit it to one year. */
+
+#ifdef SECURE
+	secure = " secure;";
+#else
+	secure = "";
+#endif
 	kutil_epoch2str
 		(time(NULL) + 60 * 60 * 24 * 365,
 		 buf, sizeof(buf));
 	khttp_head(r, kresps[KRESP_SET_COOKIE],
-		"%s=%" PRId64 "; HttpOnly; path=/; expires=%s", 
-		keys[KEY_SESSCOOKIE].name, cookie, buf);
+		"%s=%" PRId64 ";%s HttpOnly; path=/; expires=%s", 
+		keys[KEY_SESSCOOKIE].name, cookie, secure, buf);
 	khttp_head(r, kresps[KRESP_SET_COOKIE],
-		"%s=%s; HttpOnly; path=/; expires=%s", 
-		keys[KEY_SESSUSER].name, name, buf);
+		"%s=%s;%s HttpOnly; path=/; expires=%s", 
+		keys[KEY_SESSUSER].name, name, secure, buf);
 	send_301(r);
+
 	kutil_info(r, name, "user logged in");
 }
 
