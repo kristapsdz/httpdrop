@@ -189,7 +189,7 @@ loginpage(struct kreq *r, enum loginerr error)
 	t.arg = &l;
 	t.cb = loginpage_template;
 	http_open(r, KHTTP_200);
-	khttp_template(r, &t, DATADIR "loginpage.xml");
+	khttp_template(r, &t, DATADIR "/loginpage.xml");
 }
 
 static void
@@ -541,7 +541,7 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	t.cb = get_dir_template;
 
 	khtml_closeelem(&req, 1);
-	khttp_template(r, &t, DATADIR "httpdrop.xml");
+	khttp_template(r, &t, DATADIR "/httpdrop.xml");
 	khtml_closeelem(&req, 3);
 	khtml_close(&req);
 
