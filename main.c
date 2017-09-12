@@ -51,9 +51,10 @@ enum	key {
 	KEY_FILE,
 	KEY_FILENAME,
 	KEY_OP,
-	KEY_USER,
+	KEY_PASSWD,
 	KEY_SESSCOOKIE,
 	KEY_SESSUSER,
+	KEY_USER,
 	KEY__MAX
 };
 
@@ -104,9 +105,10 @@ static const struct kvalid keys[KEY__MAX] = {
 	{ NULL, "file" }, /* KEY_FILE */
 	{ kvalid_stringne, "filename" }, /* KEY_FILENAME */
 	{ kvalid_stringne, "op" }, /* KEY_OP */
-	{ kvalid_stringne, "user" }, /* KEY_USER */
+	{ kvalid_stringne, "passwd" }, /* KEY_PASSWD */
 	{ kvalid_int, "stok" }, /* KEY_SESSCOOKIE */
 	{ kvalid_stringne, "suser" }, /* KEY_SESSUSER */
+	{ kvalid_stringne, "user" }, /* KEY_USER */
 };
 
 static void
@@ -808,27 +810,35 @@ post_op_login(int authfd, const char *authpath,
 	const struct userq *uq, struct kreq *r)
 {
 	int	 	 fd;
-	const char	*name;
+	const char	*name, *pass;
 	char		 buf[1024];
 	const struct user *u;
-	int64_t		 cookie = 12345;
+	int64_t		 cookie;
 
-	if (NULL == r->fieldmap[KEY_USER]) {
+	if (NULL == r->fieldmap[KEY_USER] ||
+	    NULL == r->fieldmap[KEY_PASSWD]) {
 		loginpage(r, LOGINERR_NOFIELD);
 		return;
 	}
+
 	name = r->fieldmap[KEY_USER]->parsed.s;
+	pass = r->fieldmap[KEY_PASSWD]->parsed.s;
 
 	TAILQ_FOREACH(u, uq, entries)
-		if (0 == strcmp(u->name, name))
+		if (0 == strcasecmp(u->name, name))
 			break;
 
 	if (NULL == u) {
 		kutil_warnx(r, NULL, "user not found: %s", name);
 		loginpage(r, LOGINERR_BADCREDS);
 		return;
+	} else if (crypt_checkpass(pass, u->hash)) {
+		kutil_warnx(r, name, "incorrect password");
+		loginpage(r, LOGINERR_BADCREDS);
+		return;
 	}
 
+	cookie = arc4random();
 	snprintf(buf, sizeof(buf), "%" PRId64 "\n", cookie);
 
 	fd = openat(authfd, name, 
@@ -845,7 +855,6 @@ post_op_login(int authfd, const char *authpath,
 		return;
 	}
 	close(fd);
-	kutil_info(r, name, "user logged in");
 	kutil_epoch2str
 		(time(NULL) + 60 * 60 * 24 * 365,
 		 buf, sizeof(buf));
@@ -856,6 +865,7 @@ post_op_login(int authfd, const char *authpath,
 		"%s=%s; HttpOnly; path=/; expires=%s", 
 		keys[KEY_SESSUSER].name, name, buf);
 	send_301(r);
+	kutil_info(r, name, "user logged in");
 }
 
 /*
