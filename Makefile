@@ -4,7 +4,7 @@ CFLAGS	+= -W -Wall -Wextra -g
 
 HTURI	 = /
 WWWDIR	 = /var/www
-DATADIR	 = /data/
+DATADIR	 = /data
 LOGFILE	 = /logs/httpdrop-system.log
 CACHEDIR = /cache/httpdrop
 
@@ -19,6 +19,9 @@ httpdrop: main.o
 	$(CC) -static -o $@ main.o $(LDFLAGS) -lkcgi -lkcgihtml -lz
 
 installwww: httpdrop
+	mkdir -p $(WWWDIR)/htdocs
+	mkdir -p $(WWWDIR)/cgi-bin
+	mkdir -p $(WWWDIR)/data
 	install -m 0444 httpdrop.css bulma.css httpdrop.js $(WWWDIR)/htdocs
 	install -m 0755 httpdrop $(WWWDIR)/cgi-bin
 	install -m 0444 httpdrop.xml loginpage.xml $(WWWDIR)/data
