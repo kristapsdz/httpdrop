@@ -17,68 +17,91 @@
 	     directory is writable; else, "immutable".
 	 -->
 	<body class="@@CLASSES@@">
-		<section class="section">
-			<div class="container">
-				@@FILES@@
-			</div>
-			<div class="container has-mutable">
-				<form id="form-rmdir" action="/cgi-bin/httpdrop@@URL@@" method="post" class="is-nonroot">
-					<div class="is-empty field is-horizontal">
-						<input type="hidden" name="op" value="rmdir" />
-						<div class="field-label is-normal">
-							<label class="label">Directory is empty.  Remove?</label>
-						</div>
-						<div class="field-body">
-							<div class="field is-grouped">
-								<div class="control">
-									<button class="button is-primary" type="submit">Delete</button>
-								</div>
+		<div class="has-login container">
+			<nav class="navbar is-transparent">
+				<div class="navbar-brand">
+					<div class="navbar-item">
+						<form method="post" action="/cgi-bin/httpdrop@@URL@@" id="form-logout">
+							<input type="hidden" name="op" value="logout" />
+							<div class="field is-small">
+								<button class="button is-success" title="Logout" type="submit">
+									Logout
+								</button>
+							</div>
+						</form>
+					</div>
+					<div class="navbar-item">
+						<i class="fa fa-fw fa-user-circle-o"></i>
+						@@USER@@
+					</div>
+				</div>
+			</nav>
+		</div>
+		<div class="container" id="files">
+			@@FILES@@
+		</div>
+		<div class="container has-mutable" id="filemods">
+			<form id="form-rmdir" action="/cgi-bin/httpdrop@@URL@@" method="post" class="is-nonroot">
+				<div class="is-empty field is-horizontal">
+					<input type="hidden" name="op" value="rmdir" />
+					<div class="field-label is-normal">
+						<label class="label">Directory is empty.  Remove?</label>
+					</div>
+					<div class="field-body">
+						<div class="field is-grouped">
+							<div class="control">
+								<button class="button is-primary" type="submit">Delete</button>
 							</div>
 						</div>
 					</div>
-				</form>
-				<form action="/cgi-bin/httpdrop@@URL@@" method="post" enctype="multipart/form-data" id="file-uploader">
-					<input type="hidden" name="op" value="mkfile" />
-					<div class="field is-grouped">
-						<div class="control">
-							<div class="file has-name">
-								<label class="file-label">
-									<input required="required" class="file-input" type="file" name="file" id="file-name-input" />
-									<span class="file-cta">
-										<span class="file-icon">
-											<i class="fa fa-upload"></i>
-										</span>
-										<span class="file-label">
-											Choose a file&#8230;
-										</span>
+				</div>
+			</form>
+			<form action="/cgi-bin/httpdrop@@URL@@" method="post" enctype="multipart/form-data" id="file-uploader">
+				<input type="hidden" name="op" value="mkfile" />
+				<div class="field is-grouped">
+					<div class="control">
+						<div class="file has-name">
+							<label class="file-label">
+								<input required="required" class="file-input" type="file" name="file" id="file-name-input" />
+								<span class="file-cta">
+									<span class="file-icon">
+										<i class="fa fa-upload"></i>
 									</span>
-									<span class="file-name" id="file-name-text">
-										<span id="file-name-no-file"><i class="fa fa-square-o"></i></span>
-										<span id="file-name-has-file"><i class="fa fa-check-square-o"></i></span>
+									<span class="file-label">
+										Choose a file&#8230;
 									</span>
-								</label>
-							</div>
-						</div>
-						<div class="control">
-							<button id="file-uploader-button" class="button is-primary" type="submit">Upload</button>
+								</span>
+								<span class="file-name" id="file-name-text">
+									<span id="file-name-no-file"><i class="fa fa-square-o"></i></span>
+									<span id="file-name-has-file"><i class="fa fa-check-square-o"></i></span>
+								</span>
+							</label>
 						</div>
 					</div>
-				</form>
-				<form action="/cgi-bin/httpdrop@@URL@@" method="post">
-					<input type="hidden" name="op" value="mkdir" />
-					<div class="field is-grouped">
-						<div class="control is-expanded">
-							<input required="required" type="text" placeholder="Create folder" name="dir" class="input is-fullwidth" />
-						</div>
-						<div class="control">
-							<button class="button is-primary" type="submit">Create</button>
-						</div>
+					<div class="control">
+						<button id="file-uploader-button" class="button is-primary" type="submit">Upload</button>
 					</div>
-				</form>
+				</div>
+			</form>
+			<form action="/cgi-bin/httpdrop@@URL@@" method="post">
+				<input type="hidden" name="op" value="mkdir" />
+				<div class="field is-grouped">
+					<div class="control is-expanded">
+						<input required="required" type="text" placeholder="Directory name" name="dir" class="input is-fullwidth" />
+					</div>
+					<div class="control">
+						<button class="button is-primary" type="submit">Create</button>
+					</div>
+				</div>
+			</form>
+		</div>
+		<div class="container has-immutable" id="nofilemods">
+			<div class="notification is-warning">
+				<p>
+					Directory and file modifications are disabled: the resource is read-only.
+				</p>
 			</div>
-			<div class="container has-immutable">
-			</div>
-		</section>
+		</div>
 	</body>
 </html>
 

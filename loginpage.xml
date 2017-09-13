@@ -9,10 +9,14 @@
 		<link href="/httpdrop.css" rel="stylesheet" />
 		<script src="/httpdrop.js"></script>
 	</head>
-	<body class="loginpage @@CLASS@@">
+	<body id="loginpage" class="@@CLASS@@">
 		<section class="hero is-fullheight">
 			<div class="hero-body">
 				<div class="container">
+					<p>
+						You need credentials to access your documents.
+						All system use is logged and monitored.
+					</p>
 					<form action="/cgi-bin/httpdrop@@URL@@" method="post">
 						<input type="hidden" name="op" value="login" />
 						<div class="errormsg notification is-warning" id="errormsg-badcreds">
@@ -40,7 +44,7 @@
 						</div>
 						<div class="field">
 							<div class="control login">
-								<button class="button is-success is-outlined is-fullwidth">Login</button>
+								<button class="button is-success is-fullwidth">Login</button>
 							</div>
 						</div>
 					</form>

@@ -8,7 +8,27 @@
 		<link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" />
 		<link href="/httpdrop.css" rel="stylesheet" />
 	</head>
-	<body class="errorpage">
+	<body id="errorpage" class="@@CLASSES@@">
+		<div class="has-login container">
+			<nav class="navbar is-transparent">
+				<div class="navbar-brand">
+					<div class="navbar-item">
+						<form method="post" action="/cgi-bin/httpdrop@@URL@@" id="form-logout">
+							<input type="hidden" name="op" value="logout" />
+							<div class="field is-small">
+								<button class="button is-success" title="Logout" type="submit">
+									Logout
+								</button>
+							</div>
+						</form>
+					</div>
+					<div class="navbar-item">
+						<i class="fa fa-fw fa-user-circle-o"></i>
+						@@USER@@
+					</div>
+				</div>
+			</nav>
+		</div>
 		<section class="hero is-danger is-fullheight">
 			<div class="hero-body">
 				<div class="container">

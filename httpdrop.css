@@ -1,38 +1,41 @@
 .hide				{ display: none; }
-.file-name .fa			{ vertical-align: middle; }
-.container			{ margin: 1em auto; }
-.section > .container:first-child
-				{ margin-bottom: 1em; }
-.section > .container:nth-child(2)
-				{ margin-bottom: 3em; }
-form				{ margin: 1em auto; }
-form.icon			{ margin: 0; }
-ul				{ list-style-type: none; 
+#files				{ margin: 2em auto; 
+				  padding: 0 1em; }
+#files ul			{ list-style-type: none; 
 				  padding: 0; }
-ul li > *			{ display: block; 
+#files ul li > *		{ display: block; 
 				  text-overflow: ellipsis;
 				  overflow: hidden; }
-ul li				{ padding: 4pt; }
-ul li + li			{ margin-top: 4pt; }
-ul li:nth-child(odd)		{ background-color: #f0f0f0; }
-#form-rmdir			{ margin: 2em auto; }
+#files ul li			{ padding: 4pt; }
+#files ul li + li		{ margin-top: 4pt; }
+#files ul li:nth-child(odd)	{ background-color: #f0f0f0; }
+#nofilemods, #filemods		{ padding: 0 1em; }
+#filemods .file-name .fa	{ vertical-align: middle; }
+#filemods > form		{ margin: 1em auto; }
+#form-logout			{ margin: 0; }
+
 .immutable .has-mutable		{ display: none; }
 .mutable .has-immutable		{ display: none; }
 .empty .is-nonempty		{ display: none; }
 .nonempty .is-empty		{ display: none; }
 .root .is-nonroot		{ display: none; }
 .nonroot .is-root		{ display: none; }
+.has-login			{ display: none; }
+.loggedin .has-login		{ display: block; }
 
-.loginpage form			{ max-width: 400px; }
-.loginpage .errormsg		{ display: none; }
-.loginpage.error-badcreds #errormsg-badcreds,
-.loginpage.error-nofield #errormsg-nofield,
-.loginpage.error-syserr #errormsg-syserr
+#loginpage .container > *	{ max-width: 400px; 
+				  margin: 1.12em auto; }
+#loginpage .errormsg		{ display: none; }
+#loginpage.error-badcreds #errormsg-badcreds,
+#loginpage.error-nofield #errormsg-nofield,
+#loginpage.error-syserr #errormsg-syserr
 				{ display: block; }
 
 @media (min-width: 750px) {
-ul li			{ display: flex; }
-ul li > :first-child	{ flex: 1; }
-ul li > *		{ padding: 0 4pt; }
-ul li + li		{ margin-top: 4pt; }
+ #files				{ padding: 0; }
+ #files ul li			{ display: flex; }
+ #files ul li > :first-child	{ flex: 1; }
+ #files ul li > *		{ padding: 0 4pt; }
+ #files ul li + li		{ margin-top: 4pt; }
+ #nofilemods, #filemods		{ padding: 0; }
 }
