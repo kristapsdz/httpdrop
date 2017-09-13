@@ -139,9 +139,10 @@ errorpage(struct kreq *, const char *, ...)
 /*
  * Fill out all HTTP secure headers.
  * Use the existing document's MIME type.
+ * Then emit the body indicator.
  */
 static void
-http_alloc(struct kreq *r, enum khttp code)
+http_open(struct kreq *r, enum khttp code)
 {
 
 	khttp_head(r, kresps[KRESP_STATUS], 
@@ -151,17 +152,6 @@ http_alloc(struct kreq *r, enum khttp code)
 	khttp_head(r, "X-Content-Type-Options", "nosniff");
 	khttp_head(r, "X-Frame-Options", "DENY");
 	khttp_head(r, "X-XSS-Protection", "1; mode=block");
-}
-
-/*
- * Fill out all headers with http_alloc() then start the HTTP document
- * body (no more headers after this point!)
- */
-static void
-http_open(struct kreq *r, enum khttp code)
-{
-
-	http_alloc(r, code);
 	khttp_body(r);
 }
 
@@ -564,16 +554,8 @@ get_file(int fd, const char *path, struct kreq *r)
 	 * file and cross-check.
 	 */
 
-	khttp_head(r, kresps[KRESP_STATUS], 
-		"%s", khttps[KHTTP_200]);
-	khttp_head(r, kresps[KRESP_CONTENT_TYPE], 
-		"%s", kmimetypes[r->mime]);
-	khttp_head(r, "X-Content-Type-Options", "nosniff");
-	khttp_head(r, "X-Frame-Options", "DENY");
-	khttp_head(r, "X-XSS-Protection", "1; mode=block");
-	khttp_body(r);
+	http_open(r, KHTTP_200);
 	khttp_template_fd(r, NULL, nfd, path);
-
 	close(nfd);
 }
 
@@ -591,15 +573,9 @@ send_301_path(struct kreq *r, const char *fullpath)
 	np = kutil_urlabs(r->scheme, r->host, r->port, path);
 	free(path);
 
-	khttp_head(r, kresps[KRESP_STATUS], 
-		"%s", khttps[KHTTP_303]);
-        khttp_head(r, kresps[KRESP_CONTENT_TYPE], 
-		"%s", kmimetypes[r->mime]);
-	khttp_head(r, kresps[KRESP_LOCATION], 
-		"%s", np);
-	khttp_body(r);
+	khttp_head(r, kresps[KRESP_LOCATION], "%s", np);
+	http_open(r, KHTTP_303);
 	khttp_puts(r, "Redirecting...");
-
 	free(np);
 }
 
