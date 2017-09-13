@@ -14,7 +14,7 @@ sinclude Makefile.local
 CFLAGS	+= -DHTURI=\"$(HTURI)\"
 CFLAGS	+= -DDATADIR=\"$(DATADIR)\"
 CFLAGS	+= -DLOGFILE=\"$(LOGFILE)\"
-CFLAGS	+= -DCACHE=\"$(CACHEDIR)\"
+CFLAGS	+= -DCACHEDIR=\"$(CACHEDIR)\"
 CFLAGS	+= $(SECURE)
 
 httpdrop: main.o
