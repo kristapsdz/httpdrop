@@ -285,13 +285,14 @@ check_canwrite(const struct stat *st)
 	    (st->st_uid == getuid() && (S_IWUSR & st->st_mode)) ||
 	    (st->st_gid == getgid() && (S_IWGRP & st->st_mode))) {
 		isw = 1;
-	} else {
+	} else if (S_IWGRP & st->st_mode) {
 		groupsz = getgroups(sizeof(groups), groups);
 		if (-1 == groupsz)
 			return(-1);
-		for (i = 0; i < groupsz; i++)
+		for (i = 0; i < groupsz; i++) {
 			if (st->st_gid == groups[i])
 				break;
+		}
 		isw = i < groupsz;
 	}
 	return(isw);
