@@ -1,5 +1,6 @@
 /*	$Id$ */
 #include <sys/queue.h>
+#include <sys/param.h>
 #include <sys/stat.h>
 
 #include <assert.h>
@@ -275,6 +276,28 @@ fref_cmp(const void *p1, const void *p2)
 }
 
 static int
+check_canwrite(const struct stat *st)
+{
+	int		 isw = 0, i, groupsz;
+	gid_t		 groups[NGROUPS_MAX];
+
+	if ((S_IWOTH & st->st_mode) ||
+	    (st->st_uid == getuid() && (S_IWUSR & st->st_mode)) ||
+	    (st->st_gid == getgid() && (S_IWGRP & st->st_mode))) {
+		isw = 1;
+	} else {
+		groupsz = getgroups(sizeof(groups), groups);
+		if (-1 == groupsz)
+			return(-1);
+		for (i = 0; i < groupsz; i++)
+			if (st->st_gid == groups[i])
+				break;
+		isw = i < groupsz;
+	}
+	return(isw);
+}
+
+static int
 get_dir_template(size_t index, void *arg)
 {
 	struct dirpage	*pg = arg;
@@ -358,12 +381,13 @@ get_dir_template(size_t index, void *arg)
 			khtml_attr(&req, KELEM_DIV,
 				KATTR_CLASS, "field is-small",
 				KATTR__MAX);
+
 			/*
 			 * Disallow deletion if we don't have access
 			 * rights to the file.
 			 */
-			if ((S_IWUSR|S_IWGRP|S_IWOTH) & 
-			    ff->st.st_mode)
+
+			if (check_canwrite(&ff->st) > 0)
 				khtml_attr(&req, KELEM_BUTTON,
 					KATTR_CLASS, "button "
 						"is-danger is-outlined",
@@ -1194,7 +1218,6 @@ main(void)
 	 * See what kind of resource we're asking for by looking it up
 	 * under the cache root.
 	 * Disallow non-regular or directory files.
-	 * FIXME: do permission checks now.
 	 */
 
 	rc = '\0' != cp[0] ? 
@@ -1213,7 +1236,17 @@ main(void)
 	else
 		ftype = FTYPE_OTHER;
 
-	isw = (S_IWUSR|S_IWGRP|S_IWOTH) & st.st_mode;
+	/*
+	 * See if we have writable access to the resource.
+	 * First check other status, then user, then primary group.
+	 * If that fails, look in our supplemental groups.
+	 */
+
+	if ((isw = check_canwrite(&st)) < 0) {
+		kutil_warn(&r, NULL, "getgroups");
+		errorpage(&r, "System error.");
+		goto out;
+	}
 
 	/*
 	 * If we're a GET, then either list the directory contents or
