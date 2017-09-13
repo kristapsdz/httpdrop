@@ -9,27 +9,27 @@
 		<link href="/httpdrop.css" rel="stylesheet" />
 	</head>
 	<body id="errorpage" class="@@CLASSES@@">
-		<div class="has-login container">
-			<nav class="navbar is-transparent">
-				<div class="navbar-brand">
-					<div class="navbar-item">
-						<form method="post" action="/cgi-bin/httpdrop@@URL@@" id="form-logout">
-							<input type="hidden" name="op" value="logout" />
-							<div class="field is-small">
-								<button class="button is-success" title="Logout" type="submit">
-									Logout
-								</button>
-							</div>
-						</form>
-					</div>
-					<div class="navbar-item">
-						<i class="fa fa-fw fa-user-circle-o"></i>
-						@@USER@@
-					</div>
-				</div>
-			</nav>
-		</div>
 		<section class="hero is-danger is-fullheight">
+			<div class="has-login container">
+				<nav class="navbar is-transparent">
+					<div class="navbar-brand">
+						<div class="navbar-item">
+							<form method="post" action="/cgi-bin/httpdrop@@URL@@" id="form-logout">
+								<input type="hidden" name="op" value="logout" />
+								<div class="field is-small">
+									<button class="button is-success" title="Logout" type="submit">
+										Logout
+									</button>
+								</div>
+							</form>
+						</div>
+						<div class="navbar-item">
+							<i class="fa fa-fw fa-user-circle-o"></i>
+							@@USER@@
+						</div>
+					</div>
+				</nav>
+			</div>
 			<div class="hero-body">
 				<div class="container">
 					<h1 class="title">Error</h1>

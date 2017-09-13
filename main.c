@@ -94,7 +94,7 @@ TAILQ_HEAD(userq, user);
  */
 struct	loginpage {
 	enum loginerr	 error; /* login page error */
-	struct kreq	*req; /* HTTP request */
+	struct sys	*sys;
 };
 
 /*
@@ -106,9 +106,8 @@ struct	dirpage {
 	size_t		 rfilesz; /* regular file count */
 	int		 rdwr; /* is read-writable? */
 	int		 root; /* is document root? */
-	int		 loggedin; /* is logged in? */
 	const char	*fpath; /* request path w/script name */
-	struct kreq	*req; /* HTTP request */
+	struct sys	*sys;
 };
 
 /*
@@ -116,8 +115,26 @@ struct	dirpage {
  */
 struct	errorpage {
 	const char	*msg; /* error message */
-	int		 loggedin; /* is logged in? */
-	struct kreq	*req; /* HTTP request */
+	struct sys	*sys;
+};
+
+/*
+ * This is the system object.
+ * It's filled in for each request.
+ * The descriptors are initialised to -1, but in the non-degenerative
+ * case are valid.
+ */
+struct	sys {
+	struct userq	*uq; /* system users (or NULL) */
+	const char	*cachedir; /* root of system files */
+	const char	*filedir; /* root of files */
+	const char	*authdir; /* root of cookies */
+	int		 cachefd; /* directory handle */
+	int		 filefd; /* directory handle */
+	int		 authfd; /* directory handle */
+	const char	*resource; /* requested resource */
+	struct kreq	 req; /* request */
+	int		 loggedin; /* logged in? */
 };
 
 static const char *const pages[PAGE__MAX] = {
@@ -136,7 +153,7 @@ static const struct kvalid keys[KEY__MAX] = {
 };
 
 static void
-errorpage(struct kreq *, const char *, ...) 
+errorpage(struct sys *, const char *, ...) 
 	__attribute__((format(printf, 2, 3)));
 
 /*
@@ -161,51 +178,56 @@ http_open(struct kreq *r, enum khttp code)
 static int
 loginpage_template(size_t index, void *arg)
 {
-	struct loginpage *l = arg;
+	struct loginpage *pg = arg;
+	struct khtmlreq	  req;
+
+	khtml_open(&req, &pg->sys->req, KHTML_PRETTY);
 
 	switch (index) {
 	case 0:
-		khttp_puts(l->req, l->req->fullpath);
+		khtml_puts(&req, pg->sys->req.fullpath);
 		break;
 	case 1:
-		switch (l->error) {
+		switch (pg->error) {
 		case LOGINERR_BADCREDS:
-			khttp_puts(l->req, "error-badcreds");
+			khtml_puts(&req, "error-badcreds");
 			break;
 		case LOGINERR_NOFIELD:
-			khttp_puts(l->req, "error-nofield");
+			khtml_puts(&req, "error-nofield");
 			break;
 		case LOGINERR_SYSERR:
-			khttp_puts(l->req, "error-syserr");
+			khtml_puts(&req, "error-syserr");
 			break;
 		default:
 			break;
 		}
 		break;
 	default:
+		khtml_close(&req);
 		return(0);
 	}
 
+	khtml_close(&req);
 	return(1);
 }
 
 static void
-loginpage(struct kreq *r, enum loginerr error)
+loginpage(struct sys *sys, enum loginerr error)
 {
 	struct ktemplate t;
-	struct loginpage l;
+	struct loginpage loginpage;
 	const char *const ts[] = { "URL", "CLASS" };
 
-	l.req = r;
-	l.error = error;
+	loginpage.sys = sys;
+	loginpage.error = error;
 
 	memset(&t, 0, sizeof(struct ktemplate));
 	t.key = ts;
 	t.keysz = 2;
-	t.arg = &l;
+	t.arg = &loginpage;
 	t.cb = loginpage_template;
-	http_open(r, KHTTP_200);
-	khttp_template(r, &t, DATADIR "/loginpage.xml");
+	http_open(&sys->req, KHTTP_200);
+	khttp_template(&sys->req, &t, DATADIR "/loginpage.xml");
 }
 
 static int
@@ -213,16 +235,26 @@ errorpage_template(size_t index, void *arg)
 {
 	struct errorpage *pg = arg;
 	struct khtmlreq	  req;
+	char		  classes[1024];
 
-	khtml_open(&req, pg->req, KHTML_PRETTY);
+	classes[0] = '\0';
+	khtml_open(&req, &pg->sys->req, KHTML_PRETTY);
 
 	switch (index) {
 	case 0:
-		khtml_puts(&req, pg->req->fullpath);
+		khtml_puts(&req, pg->sys->req.fullpath);
 		break;
 	case 1:
+		strlcat(classes, pg->sys->loggedin ?
+			" loggedin" : "", sizeof(classes));
+		khtml_puts(&req, classes);
 		break;
 	case 2:
+		if (NULL == pg->sys->req.cookiemap[KEY_SESSUSER])
+			break;
+		khtml_puts(&req, pg->sys->req.cookiemap[KEY_SESSUSER]->parsed.s);
+		break;
+	case 3:
 		khtml_puts(&req, pg->msg);
 		break;
 	default:
@@ -235,13 +267,13 @@ errorpage_template(size_t index, void *arg)
 }
 
 static void
-errorpage(struct kreq *r, const char *fmt, ...)
+errorpage(struct sys *sys, const char *fmt, ...)
 {
 	struct errorpage pg;
 	char		*buf;
 	va_list		 ap;
 	struct ktemplate t;
-	const char *const ts[] = { "URL", "CLASSES", "MESSAGE" };
+	const char *const ts[] = { "URL", "CLASSES", "USER", "MESSAGE" };
 
 	va_start(ap, fmt);
 	if (-1 == vasprintf(&buf, fmt, ap))
@@ -249,15 +281,15 @@ errorpage(struct kreq *r, const char *fmt, ...)
 	va_end(ap);
 
 	pg.msg = buf;
-	pg.req = r;
+	pg.sys = sys;
 
 	memset(&t, 0, sizeof(struct ktemplate));
 	t.key = ts;
-	t.keysz = 3;
+	t.keysz = 4;
 	t.arg = &pg;
 	t.cb = errorpage_template;
-	http_open(r, KHTTP_200);
-	khttp_template(r, &t, DATADIR "/errorpage.xml");
+	http_open(&sys->req, KHTTP_200);
+	khttp_template(&sys->req, &t, DATADIR "/errorpage.xml");
 	free(buf);
 }
 
@@ -317,10 +349,10 @@ get_dir_template(size_t index, void *arg)
 	size_t		 i;
 	char		 classes[1024];
 
-	khtml_open(&req, pg->req, KHTML_PRETTY);
+	khtml_open(&req, &pg->sys->req, KHTML_PRETTY);
 
 	if (0 == index) {
-		khtml_puts(&req, pg->req->fullpath);
+		khtml_puts(&req, pg->sys->req.fullpath);
 		khtml_close(&req);
 		return(1);
 	} else if (1 == index) {
@@ -331,14 +363,14 @@ get_dir_template(size_t index, void *arg)
 			" root" : " nonroot", sizeof(classes));
 		strlcat(classes, pg->rfilesz > 0 ?
 			" nonempty" : " empty", sizeof(classes));
-		strlcat(classes, pg->loggedin ?
+		strlcat(classes, pg->sys->loggedin ?
 			" loggedin" : "", sizeof(classes));
-		khttp_puts(pg->req, classes);
+		khtml_puts(&req, classes);
 		khtml_close(&req);
 		return(1);
 	} else if (2 == index) {
-		if (NULL != pg->req->cookiemap[KEY_SESSUSER])
-			khtml_puts(&req, pg->req->cookiemap[KEY_SESSUSER]->parsed.s);
+		if (NULL != pg->sys->req.cookiemap[KEY_SESSUSER])
+			khtml_puts(&req, pg->sys->req.cookiemap[KEY_SESSUSER]->parsed.s);
 		khtml_close(&req);
 		return(1);
 	} else if (index > 3) {
@@ -459,7 +491,7 @@ get_dir_template(size_t index, void *arg)
  * FIXME: use directory mtime and cache control.
  */
 static void
-get_dir(int fd, const char *path, int rdwr, struct kreq *r, int login)
+get_dir(struct sys *sys, int rdwr)
 {
 	int		 nfd;
 	struct stat	 st;
@@ -473,14 +505,14 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r, int login)
 	struct fref	*files = NULL;
 	struct dirpage	 dirpage;
 
-	if ('\0' != path[0]) {
-		if (-1 == (nfd = openat(fd, path, fl, 0)))
-			kutil_warn(r, NULL, "%s: openat", path);
-	} else if (-1 == (nfd = dup(fd)))
-		kutil_warn(r, NULL, "%s: dup", path);
+	if ('\0' != sys->resource[0]) {
+		if (-1 == (nfd = openat(sys->filefd, sys->resource, fl, 0)))
+			kutil_warn(&sys->req, NULL, "%s: openat", sys->resource);
+	} else if (-1 == (nfd = dup(sys->filefd)))
+		kutil_warn(&sys->req, NULL, "%s: dup", sys->resource);
 
 	if (-1 == nfd) {
-		errorpage(r, "Cannot open directory \"%s\".", path);
+		errorpage(sys, "Cannot open directory \"%s\".", sys->resource);
 		return;
 	}
 
@@ -490,8 +522,8 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r, int login)
 	 */
 
 	if (NULL == (dir = fdopendir(nfd))) {
-		kutil_warn(r, NULL, "%s: fdopendir", path);
-		errorpage(r, "Cannot scan directory \"%s\".", path);
+		kutil_warn(&sys->req, NULL, "%s: fdopendir", sys->resource);
+		errorpage(sys, "Cannot scan directory \"%s\".", sys->resource);
 		return;
 	}
 
@@ -507,15 +539,15 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r, int login)
 		    0 == strcmp(dp->d_name, "."))
 			continue;
 		if (0 == strcmp(dp->d_name, "..") &&
-		    '\0' == path[0])
+		    '\0' == sys->resource[0])
 			continue;
 		if (-1 == fstatat(nfd, dp->d_name, &st, 0))
 			continue;
 
 		/* Get file information... */
 
-		kasprintf(&fpath, "%s/%s%s%s", r->pname, 
-			path, '\0' != path[0] ? "/" : "", dp->d_name);
+		kasprintf(&fpath, "%s/%s%s%s", sys->req.pname, 
+			sys->resource, '\0' != sys->resource[0] ? "/" : "", dp->d_name);
 		files = kreallocarray(files, 
 			filesz + 1, sizeof(struct fref));
 		files[filesz].st = st;
@@ -530,17 +562,16 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r, int login)
 
 	qsort(files, filesz, sizeof(struct fref), fref_cmp);
 
-	kasprintf(&fpath, "%s/%s%s", r->pname, 
-		path, '\0' != path[0] ? "/" : "");
+	kasprintf(&fpath, "%s/%s%s", sys->req.pname, 
+		sys->resource, '\0' != sys->resource[0] ? "/" : "");
 
 	dirpage.frefs = files;
 	dirpage.frefsz = filesz;
 	dirpage.rfilesz = rfilesz;
 	dirpage.rdwr = rdwr;
 	dirpage.fpath = fpath;
-	dirpage.req = r;
-	dirpage.loggedin = login;
-	dirpage.root = '\0' == path[0];
+	dirpage.root = '\0' == sys->resource[0];
+	dirpage.sys = sys;
 
 	/*
 	 * No more errors reported.
@@ -554,8 +585,8 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r, int login)
 	t.arg = &dirpage;
 	t.cb = get_dir_template;
 
-	http_open(r, KHTTP_200);
-	khttp_template(r, &t, DATADIR "/page.xml");
+	http_open(&sys->req, KHTTP_200);
+	khttp_template(&sys->req, &t, DATADIR "/page.xml");
 
 	free(fpath);
 	for (i = 0; i < filesz; i++) {
@@ -570,14 +601,14 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r, int login)
  * All we do use is the template feature to print out.
  */
 static void
-get_file(int fd, const char *path, struct kreq *r)
+get_file(struct sys *sys)
 {
 	int		  nfd;
 
-	nfd = openat(fd, path, O_RDONLY, 0);
+	nfd = openat(sys->filefd, sys->resource, O_RDONLY, 0);
 	if (-1 == nfd) {
-		kutil_warn(r, NULL, "%s: openat", path);
-		errorpage(r, "Cannot open file \"%s\".", path);
+		kutil_warn(&sys->req, NULL, "%s: openat", sys->resource);
+		errorpage(sys, "Cannot open file \"%s\".", sys->resource);
 		return;
 	}
 
@@ -586,8 +617,8 @@ get_file(int fd, const char *path, struct kreq *r)
 	 * file and cross-check.
 	 */
 
-	http_open(r, KHTTP_200);
-	khttp_template_fd(r, NULL, nfd, path);
+	http_open(&sys->req, KHTTP_200);
+	khttp_template_fd(&sys->req, NULL, nfd, sys->resource);
 	close(nfd);
 }
 
@@ -596,9 +627,10 @@ get_file(int fd, const char *path, struct kreq *r)
  * This is used after making a POST.
  */
 static void
-send_301_path(struct kreq *r, const char *fullpath)
+send_301_path(struct sys *sys, const char *fullpath)
 {
 	char	*np, *path;
+	struct kreq	*r = &sys->req;
 
 	kasprintf(&path, "%s%s%s", r->pname, 
 		'/' != fullpath[0] ? "/" : "", fullpath);
@@ -616,10 +648,10 @@ send_301_path(struct kreq *r, const char *fullpath)
  * This is used after making a POST.
  */
 static void
-send_301(struct kreq *r)
+send_301(struct sys *sys)
 {
 
-	send_301_path(r, r->fullpath);
+	send_301_path(sys, sys->req.fullpath);
 }
 
 /*
@@ -627,16 +659,15 @@ send_301(struct kreq *r)
  * file descriptor "nfd".
  */
 static void
-post_op_rmfile(int nfd, const char *path,
-	const char *fn, struct kreq *r)
+post_op_rmfile(struct sys *sys, int nfd, const char *fn)
 {
 
 	if (-1 == unlinkat(nfd, fn, 0) && ENOENT != errno) {
-		kutil_warn(r, NULL, "%s/%s: unlinkat", path, fn);
-		errorpage(r, "Cannot remove \"%s\".", fn);
+		kutil_warn(&sys->req, NULL, "%s/%s: unlinkat", sys->resource, fn);
+		errorpage(sys, "Cannot remove \"%s\".", fn);
 	} else {
-		kutil_info(r, NULL, "%s/%s: unlink", path, fn);
-		send_301(r);
+		kutil_info(&sys->req, NULL, "%s/%s: unlink", sys->resource, fn);
+		send_301(sys);
 	}
 }
 
@@ -645,27 +676,27 @@ post_op_rmfile(int nfd, const char *path,
  * Send us to the directory above our own.
  */
 static void
-post_op_rmdir(int fd, const char *path, struct kreq *r)
+post_op_rmdir(struct sys *sys)
 {
 	char	*newpath, *cp;
 
-	if ('\0' == path[0]) {
-		kutil_warn(r, NULL, "tried removing root");
-		errorpage(r, "You cannot remove the root directory.");
+	if ('\0' == sys->resource[0]) {
+		kutil_warn(&sys->req, NULL, "tried removing root");
+		errorpage(sys, "You cannot remove the root directory.");
 		return;
 	}
 
-	if (-1 == unlinkat(fd, path, AT_REMOVEDIR) && ENOENT != errno) {
-		kutil_warn(r, NULL, "%s: unlinkat (dir)", path);
-		errorpage(r, "Cannot remove \"%s\".", path);
+	if (-1 == unlinkat(sys->filefd, sys->resource, AT_REMOVEDIR) && ENOENT != errno) {
+		kutil_warn(&sys->req, NULL, "%s: unlinkat (dir)", sys->resource);
+		errorpage(sys, "Cannot remove \"%s\".", sys->resource);
 	} else {
-		kutil_info(r, NULL, "%s: unlink (dir)", path);
-		newpath = kstrdup(path);
+		kutil_info(&sys->req, NULL, "%s: unlink (dir)", sys->resource);
+		newpath = kstrdup(sys->resource);
 		if (NULL != (cp = strrchr(newpath, '/')))
 			*cp = '\0';
 		else
 			newpath[0] = '\0';
-		send_301_path(r, newpath);
+		send_301_path(sys, newpath);
 		free(newpath);
 	}
 }
@@ -675,16 +706,15 @@ post_op_rmdir(int fd, const char *path, struct kreq *r)
  * descriptor "nfd".
  */
 static void
-post_op_mkdir(int nfd, const char *path,
-	const char *pn, struct kreq *r)
+post_op_mkdir(struct sys *sys, int nfd, const char *pn)
 {
 
 	if (-1 == mkdirat(nfd, pn, 0700) && EEXIST != errno) {
-		kutil_warn(r, NULL, "%s/%s: mkdirat", path, pn);
-		errorpage(r, "Cannot create directory \"%s\".", pn);
+		kutil_warn(&sys->req, NULL, "%s/%s: mkdirat", sys->resource, pn);
+		errorpage(sys, "Cannot create directory \"%s\".", pn);
 	} else {
-		kutil_info(r, NULL, "%s/%s: created", path, pn);
-		send_301(r);
+		kutil_info(&sys->req, NULL, "%s/%s: created", sys->resource, pn);
+		send_301(sys);
 	}
 }
 
@@ -696,29 +726,28 @@ post_op_mkdir(int nfd, const char *path,
  * block the connection.
  */
 static void
-post_op_mkfile(int nfd, const char *path,
-	const char *fn, const char *data, 
-	size_t sz, struct kreq *r)
+post_op_mkfile(struct sys *sys, int nfd, const char *fn, 
+	const char *data, size_t sz)
 {
 	int	 dfd, fl = O_WRONLY|O_TRUNC|O_CREAT;
 	ssize_t	 ssz;
 
 	if (-1 == (dfd = openat(nfd, fn, fl, 0600))) {
-		kutil_warn(r, NULL, "%s/%s: openat", path, fn);
-		errorpage(r, "Cannot open \"%s\".", fn);
+		kutil_warn(&sys->req, NULL, "%s/%s: openat", sys->resource, fn);
+		errorpage(sys, "Cannot open \"%s\".", fn);
 		return;
 	}
 
 	if ((ssz = write(dfd, data, sz)) < 0) {
-		kutil_warn(r, NULL, "%s/%s: write", path, fn);
-		errorpage(r, "Cannot write to file \"%s\".", fn);
+		kutil_warn(&sys->req, NULL, "%s/%s: write", sys->resource, fn);
+		errorpage(sys, "Cannot write to file \"%s\".", fn);
 	} else if ((size_t)ssz < sz) {
-		kutil_warnx(r, NULL, "%s/%s: short write", path, fn);
-		errorpage(r, "Cannot write to file \"%s\".", fn);
+		kutil_warnx(&sys->req, NULL, "%s/%s: short write", sys->resource, fn);
+		errorpage(sys, "Cannot write to file \"%s\".", fn);
 	} else {
-		kutil_info(r, NULL, "%s/%s: wrote %zu bytes", 
-			path, fn, sz);
-		send_301(r);
+		kutil_info(&sys->req, NULL, "%s/%s: wrote %zu bytes", 
+			sys->resource, fn, sz);
+		send_301(sys);
 	}
 
 	close(dfd);
@@ -729,8 +758,7 @@ post_op_mkfile(int nfd, const char *path,
  * This routes to either post_op_mkfile or post_op_mkdir.
  */
 static void
-post_op_file(int fd, const char *path, 
-	enum action act, struct kreq *r)
+post_op_file(struct sys *sys, enum action act)
 {
 	struct kpair	*kpf;
 	int		 nfd = -1;
@@ -740,64 +768,63 @@ post_op_file(int fd, const char *path,
 	/* Start with validation. */
 
 	if (ACTION_MKFILE == act &&
-	    (NULL == r->fieldmap[KEY_FILE] ||
-	     '\0' == r->fieldmap[KEY_FILE]->file[0])) {
-		send_301(r);
+	    (NULL == sys->req.fieldmap[KEY_FILE] ||
+	     '\0' == sys->req.fieldmap[KEY_FILE]->file[0])) {
+		send_301(sys);
 		return;
 	} 
 
 	if (ACTION_RMFILE == act &&
-	    NULL == r->fieldmap[KEY_FILENAME]) {
-		send_301(r);
+	    NULL == sys->req.fieldmap[KEY_FILENAME]) {
+		send_301(sys);
 		return;
 	}
 
 	if (ACTION_MKDIR == act &&
-	    NULL == r->fieldmap[KEY_DIR]) {
-		send_301(r);
+	    NULL == sys->req.fieldmap[KEY_DIR]) {
+		send_301(sys);
 		return;
 	}
 
 	/* What we're working with. */
 
 	target = ACTION_MKFILE == act ?
-		r->fieldmap[KEY_FILE]->file :
+		sys->req.fieldmap[KEY_FILE]->file :
 		ACTION_RMFILE == act ?
-		r->fieldmap[KEY_FILENAME]->parsed.s :
+		sys->req.fieldmap[KEY_FILENAME]->parsed.s :
 		ACTION_MKDIR == act ?
-		r->fieldmap[KEY_DIR]->parsed.s : NULL;
+		sys->req.fieldmap[KEY_DIR]->parsed.s : NULL;
 
 	if (NULL != target &&
 	    (NULL != strchr(target, '/') || '.' == target[0])) {
-		errorpage(r, "File name security violation.");
+		errorpage(sys, "File name security violation.");
 		return;
 	}
 
 	/* Open the path we're writing into. */
 
-	if ('\0' != path[0]) {
-		if (-1 == (nfd = openat(fd, path, dfl, 0)))
-			kutil_warn(r, NULL, "%s: openat", path);
-	} else if (-1 == (nfd = dup(fd)))
-		kutil_warn(r, NULL, "%s: dup", path);
+	if ('\0' != sys->resource[0]) {
+		if (-1 == (nfd = openat(sys->filefd, sys->resource, dfl, 0)))
+			kutil_warn(&sys->req, NULL, "%s: openat", sys->resource);
+	} else if (-1 == (nfd = dup(sys->filefd)))
+		kutil_warn(&sys->req, NULL, "%s: dup", sys->resource);
 
 	if (-1 == nfd) {
-		errorpage(r, "Cannot open directory \"%s\".", path);
+		errorpage(sys, "Cannot open directory \"%s\".", sys->resource);
 		goto out;
 	}
 
 	/* Now actually perform our operations. */
 
 	if (ACTION_MKFILE == act) {
-		kpf = r->fieldmap[KEY_FILE];
-		post_op_mkfile(nfd, path, target, 
-			kpf->val, kpf->valsz, r);
+		kpf = sys->req.fieldmap[KEY_FILE];
+		post_op_mkfile(sys, nfd, target, kpf->val, kpf->valsz);
 	} else if (ACTION_RMFILE == act) {
-		post_op_rmfile(nfd, path, target, r);
+		post_op_rmfile(sys, nfd, target);
 	} else if (ACTION_RMDIR == act) {
-		post_op_rmdir(fd, path, r);
+		post_op_rmdir(sys);
 	} else  {
-		post_op_mkdir(nfd, path, target, r);
+		post_op_mkdir(sys, nfd, target);
 	}
 out:
 	if (-1 != nfd)
@@ -805,7 +832,7 @@ out:
 }
 
 static void
-post_op_logout(int authfd, const char *authpath, struct kreq *r)
+post_op_logout(struct sys *sys)
 {
 	const char	*secure, *name;
 	char		 buf[32];
@@ -816,24 +843,23 @@ post_op_logout(int authfd, const char *authpath, struct kreq *r)
 #else
 	secure = "";
 #endif
-	name = r->cookiemap[KEY_SESSUSER]->parsed.s;
+	name = sys->req.cookiemap[KEY_SESSUSER]->parsed.s;
 
-	if (-1 == unlinkat(authfd, name, 0))
-		kutil_warn(r, name, "%s/%s", authpath, name);
+	if (-1 == unlinkat(sys->authfd, name, 0))
+		kutil_warn(&sys->req, name, "%s/%s", sys->authdir, name);
 
-	khttp_head(r, kresps[KRESP_SET_COOKIE],
+	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
 		"%s=; path=/;%s HttpOnly; expires=%s", 
 		keys[KEY_SESSCOOKIE].name, secure, buf);
-	khttp_head(r, kresps[KRESP_SET_COOKIE],
+	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
 		"%s=; path=/;%s HttpOnly; expires=%s", 
 		keys[KEY_SESSUSER].name, secure, buf);
-	send_301_path(r, "/");
-	kutil_info(r, name, "user logged out");
+	send_301_path(sys, "/");
+	kutil_info(&sys->req, name, "user logged out");
 }
 
 static void
-post_op_login(int authfd, const char *authpath, 
-	const struct userq *uq, struct kreq *r)
+post_op_login(struct sys *sys)
 {
 	int	 	 fd;
 	const char	*name, *pass, *secure;
@@ -841,9 +867,9 @@ post_op_login(int authfd, const char *authpath,
 	const struct user *u;
 	int64_t		 cookie;
 
-	if (NULL == r->fieldmap[KEY_USER] ||
-	    NULL == r->fieldmap[KEY_PASSWD]) {
-		loginpage(r, LOGINERR_NOFIELD);
+	if (NULL == sys->req.fieldmap[KEY_USER] ||
+	    NULL == sys->req.fieldmap[KEY_PASSWD]) {
+		loginpage(sys, LOGINERR_NOFIELD);
 		return;
 	}
 
@@ -853,20 +879,20 @@ post_op_login(int authfd, const char *authpath,
 	 * the heavy lefting for us.
 	 */
 
-	name = r->fieldmap[KEY_USER]->parsed.s;
-	pass = r->fieldmap[KEY_PASSWD]->parsed.s;
+	name = sys->req.fieldmap[KEY_USER]->parsed.s;
+	pass = sys->req.fieldmap[KEY_PASSWD]->parsed.s;
 
-	TAILQ_FOREACH(u, uq, entries)
+	TAILQ_FOREACH(u, sys->uq, entries)
 		if (0 == strcasecmp(u->name, name))
 			break;
 
 	if (NULL == u) {
-		kutil_warnx(r, NULL, "user not found: %s", name);
-		loginpage(r, LOGINERR_BADCREDS);
+		kutil_warnx(&sys->req, NULL, "user not found: %s", name);
+		loginpage(sys, LOGINERR_BADCREDS);
 		return;
 	} else if (crypt_checkpass(pass, u->hash)) {
-		kutil_warnx(r, name, "incorrect password");
-		loginpage(r, LOGINERR_BADCREDS);
+		kutil_warnx(&sys->req, name, "incorrect password");
+		loginpage(sys, LOGINERR_BADCREDS);
 		return;
 	}
 
@@ -878,16 +904,16 @@ post_op_login(int authfd, const char *authpath,
 	cookie = arc4random();
 	snprintf(buf, sizeof(buf), "%" PRId64 "\n", cookie);
 
-	fd = openat(authfd, name, 
+	fd = openat(sys->authfd, name, 
 		O_CREAT | O_RDWR | O_TRUNC, 0600);
 	if (-1 == fd) {
-		kutil_warn(r, NULL, "%s/%s", authpath, name);
-		loginpage(r, LOGINERR_SYSERR);
+		kutil_warn(&sys->req, NULL, "%s/%s", sys->authdir, name);
+		loginpage(sys, LOGINERR_SYSERR);
 		return;
 	}
 	if (write(fd, buf, strlen(buf)) < 0) {
-		kutil_warn(r, NULL, "%s/%s", authpath, name);
-		loginpage(r, LOGINERR_SYSERR);
+		kutil_warn(&sys->req, NULL, "%s/%s", sys->authdir, name);
+		loginpage(sys, LOGINERR_SYSERR);
 		close(fd);
 		return;
 	}
@@ -903,15 +929,15 @@ post_op_login(int authfd, const char *authpath,
 	kutil_epoch2str
 		(time(NULL) + 60 * 60 * 24 * 365,
 		 buf, sizeof(buf));
-	khttp_head(r, kresps[KRESP_SET_COOKIE],
+	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
 		"%s=%" PRId64 ";%s HttpOnly; path=/; expires=%s", 
 		keys[KEY_SESSCOOKIE].name, cookie, secure, buf);
-	khttp_head(r, kresps[KRESP_SET_COOKIE],
+	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
 		"%s=%s;%s HttpOnly; path=/; expires=%s", 
 		keys[KEY_SESSUSER].name, name, secure, buf);
-	send_301(r);
+	send_301(sys);
 
-	kutil_info(r, name, "user logged in");
+	kutil_info(&sys->req, name, "user logged in");
 }
 
 /*
@@ -920,31 +946,34 @@ post_op_login(int authfd, const char *authpath,
  * Return the file descriptor on success else -1.
  */
 static int
-open_dir(int cfd, const char *cache, const char *dir, struct kreq *r)
+open_dir(const struct sys *sys, const char *dir, struct kreq *r)
 {
 	int	 	 fd;
 
 	if ('\0' == dir[0]) {
-		kutil_warn(r, NULL, "empty directory");
+		kutil_warn(r, NULL, "zero-length path name");
 		return(-1);
 	} else if ('/' == dir[0]) {
-		kutil_warn(r, NULL, "%s: absolute directory", dir);
+		kutil_warn(r, NULL, "%s: absolute path name", dir);
 		return(-1);
 	}
 
-	fd = openat(cfd, dir, O_RDONLY | O_DIRECTORY, 0);
+	fd = openat(sys->cachefd, dir, O_RDONLY | O_DIRECTORY, 0);
 
 	if (-1 == fd && ENOENT == errno) {
-		kutil_info(r, NULL, "%s/%s: creating", cache, dir);
-		if (-1 == mkdirat(cfd, dir, 0700)) {
-			kutil_warn(r, NULL, "%s/%s: mkdir", cache, dir);
+		kutil_info(r, NULL, "%s/%s: "
+			"creating path", sys->cachedir, dir);
+		if (-1 == mkdirat(sys->cachefd, dir, 0700)) {
+			kutil_warn(r, NULL, "%s/%s: "
+				"mkdir", sys->cachedir, dir);
 			return(-1);
 		}
-		fd = openat(cfd, dir, O_RDONLY | O_DIRECTORY, 0);
+		fd = openat(sys->cachefd, dir, 
+			O_RDONLY | O_DIRECTORY, 0);
 	}
 
 	if (-1 == fd) {
-		kutil_warn(r, NULL, "%s/%s: open", cache, dir);
+		kutil_warn(r, NULL, "%s/%s: open", sys->cachedir, dir);
 		return(-1);
 	}
 
@@ -952,40 +981,40 @@ open_dir(int cfd, const char *cache, const char *dir, struct kreq *r)
 }
 
 /*
- * Try to open the file ".htpasswd" within the cache directory opened as
- * "cfd" in "cache".
+ * Try to open the file ".htpasswd" within the cache directory.
  * Return zero on fatal error, non-zero on success.
- * The "uq" will not be allocated if the file was not found; otherwise,
- * it will be allocated and filled with a (possibly-zero) user entries.
+ * The sys "uq" field will not be allocated if the file was not found;
+ * otherwise, it will be allocated and filled with a (possibly-zero)
+ * user entries.
  * Note that "uq" might be allocated on failure.
  */
 static int
-open_users(struct userq **uq, 
-	int cfd, const char *cache, struct kreq *r)
+open_users(struct sys *sys, struct kreq *r)
 {
 	int		 fd;
 	FILE		*f;
 	char		*buf;
+	const char	*fn = ".htpasswd";
 	size_t		 len, line = 1;
 	char		*user, *pass;
 	struct user	*u;
 
-	fd = openat(cfd, ".htpasswd", O_RDONLY, 0);
+	fd = openat(sys->cachefd, fn, O_RDONLY, 0);
 
 	if (-1 == fd && ENOENT != errno) {
-		kutil_warn(r, NULL, "%s/.htpasswd: open", cache);
+		kutil_warn(r, NULL, "%s/%s: open", sys->cachedir, fn);
 		return(0);
 	} else if (-1 == fd) 
 		return(1);
 
 	if (NULL == (f = fdopen(fd, "r"))) {
-		kutil_warn(r, NULL, "%s/.htpasswd: fopen", cache);
+		kutil_warn(r, NULL, "%s/%s: fopen", sys->cachedir, fn);
 		close(fd);
 		return(0);
 	}
 
-	*uq = kmalloc(sizeof(struct userq));
-	TAILQ_INIT(*uq);
+	sys->uq = kmalloc(sizeof(struct userq));
+	TAILQ_INIT(sys->uq);
 
 	while (NULL != (buf = fgetln(f, &len))) {
 		if ('\n' != buf[len - 1])
@@ -993,8 +1022,8 @@ open_users(struct userq **uq,
 		buf[len - 1] = '\0';
 		user = buf;
 		if (NULL == (pass = strchr(user, ':'))) {
-			kutil_warn(r, NULL, "%s/.htpasswd:%zu: "
-				"malformed syntax", cache, line);
+			kutil_warn(r, NULL, "%s/%s:%zu: bad "
+				"syntax", sys->cachedir, fn, line);
 			fclose(f);
 			return(0);
 		}
@@ -1002,7 +1031,7 @@ open_users(struct userq **uq,
 		u = kcalloc(1, sizeof(struct user));
 		u->name = kstrdup(user);
 		u->hash = kstrdup(pass);
-		TAILQ_INSERT_TAIL(*uq, u, entries);
+		TAILQ_INSERT_TAIL(sys->uq, u, entries);
 		line++;
 	}
 
@@ -1013,38 +1042,40 @@ open_users(struct userq **uq,
 /*
  * Open our root directory, which must be absolute.
  * All operations will use "openat" or the equivalent beneath this path.
- * Returns the file descriptor or -1.
+ * Returns zero on failure, non-zero on success.
  */
 static int
-open_cachedir(const char *root, struct kreq *r)
+open_cachedir(struct sys *sys, struct kreq *r)
 {
-	int	 	 fd;
 
-	if ('\0' == root[0]) {
-		kutil_warn(r, NULL, "empty cache directory");
-		return(-1);
-	} else if ('/' != root[0]) {
-		kutil_warn(r, NULL, "%s: relative cache directory", root);
-		return(-1);
+	if ('\0' == sys->cachedir[0]) {
+		kutil_warn(r, NULL, "zero-length cache path name");
+		return(0);
+	} else if ('/' != sys->cachedir[0]) {
+		kutil_warn(r, NULL, "%s: relative "
+			"cache path name", sys->cachedir);
+		return(0);
 	}
 
-	fd = open(root, O_RDONLY | O_DIRECTORY, 0);
+	sys->cachefd = open(sys->cachedir, O_RDONLY | O_DIRECTORY, 0);
 
-	if (-1 == fd && ENOENT == errno) {
-		kutil_info(r, NULL, "%s: creating", root);
-		if (-1 == mkdir(root, 0700)) {
-			kutil_warn(r, NULL, "%s: mkdir", root);
-			return(-1);
+	if (-1 == sys->cachefd && ENOENT == errno) {
+		kutil_info(r, NULL, "%s: creating "
+			"cache directory", sys->cachedir);
+		if (-1 == mkdir(sys->cachedir, 0700)) {
+			kutil_warn(r, NULL, "%s: mkdir", sys->cachedir);
+			return(0);
 		}
-		fd = open(root, O_RDONLY | O_DIRECTORY, 0);
+		sys->cachefd = open(sys->cachedir, 
+			O_RDONLY | O_DIRECTORY, 0);
 	}
 
-	if (-1 == fd) {
-		kutil_warn(r, NULL, "%s: open", root);
-		return(-1);
+	if (-1 == sys->cachefd) {
+		kutil_warn(r, NULL, "%s: open", sys->cachedir);
+		return(0);
 	}
 
-	return(fd);
+	return(1);
 }
 
 /*
@@ -1053,8 +1084,7 @@ open_cachedir(const char *root, struct kreq *r)
  * Returns zero on failure, non-zero on success.
  */
 static int
-check_login(struct kreq *r, 
-	const struct userq *uq, int fd, const char *dir) 
+check_login(struct sys *sys)
 {
 	const char	*name;
 	int		 nfd;
@@ -1062,60 +1092,64 @@ check_login(struct kreq *r,
 	int64_t		 cookie, ccookie;
 	const struct user *u;
 
-	assert(NULL != r->cookiemap[KEY_SESSCOOKIE]);
-	assert(NULL != r->cookiemap[KEY_SESSUSER]);
-	name = r->cookiemap[KEY_SESSUSER]->parsed.s;
-	cookie = r->cookiemap[KEY_SESSCOOKIE]->parsed.i;
+	assert(NULL != sys->req.cookiemap[KEY_SESSCOOKIE]);
+	assert(NULL != sys->req.cookiemap[KEY_SESSUSER]);
+	name = sys->req.cookiemap[KEY_SESSUSER]->parsed.s;
+	cookie = sys->req.cookiemap[KEY_SESSCOOKIE]->parsed.i;
 
 	/* Loop for user in known users. */
 
-	TAILQ_FOREACH(u, uq, entries)
+	TAILQ_FOREACH(u, sys->uq, entries)
 		if (0 == strcasecmp(u->name, name))
 			break;
 
 	if (NULL == u) {
-		kutil_warnx(r, NULL, "unknown user: %s", name);
+		kutil_warnx(&sys->req, NULL, "unknown user: %s", name);
 		return(0);
 	}
 
-	if (-1 == (nfd = openat(fd, name, O_RDONLY, 0))) {
-		kutil_warn(r, NULL, "%s/%s", dir, name);
+	if (-1 == (nfd = openat(sys->authfd, name, O_RDONLY, 0))) {
+		kutil_warn(&sys->req, NULL, "%s/%s", sys->authdir, name);
 		return(0);
 	}
 
 	if (NULL == (f = fdopen(nfd, "r"))) {
-		kutil_warn(r, NULL, "%s/%s", dir, name);
+		kutil_warn(&sys->req, NULL, "%s/%s", sys->authdir, name);
 		close(nfd);
 		return(0);
 	} else if (1 != fscanf(f, "%" PRId64, &ccookie)) {
-		kutil_warnx(r, NULL, "%s/%s: malformed", dir, name);
+		kutil_warnx(&sys->req, NULL, "%s/%s: malformed", sys->authdir, name);
 		fclose(f);
 		return(0);
 	}
 
 	fclose(f);
 	
-	if (cookie != ccookie)
-		kutil_warn(r, name, "cookie token mismatch");
+	if ( ! (sys->loggedin = (cookie == ccookie)))
+		kutil_warn(&sys->req, name, "cookie token mismatch");
 
-	return(cookie == ccookie);
+	return(sys->loggedin);
 }
 
 int
 main(void)
 {
-	struct kreq	 r;
 	enum kcgi_err	 er;
-	int		 cachefd = -1, rc, isw, filefd = -1,
-			 authfd = -1;
+	int		 rc, isw, fd;
 	enum ftype	 ftype = FTYPE_DIR;
-	const char	*cp;
 	char		*path = NULL;
 	struct stat	 st;
-	struct userq	*uq = NULL;
 	struct user	*u;
 	struct kpair	*kp;
 	enum action	 act = ACTION__MAX;
+	struct sys	 sys;
+
+	memset(&sys, 0, sizeof(struct sys));
+
+	sys.cachefd = sys.filefd = -1;
+	sys.cachedir = CACHEDIR;
+	sys.filedir = FILEDIR;
+	sys.authdir = AUTHDIR;
 
 	/* Log into a separate logfile (not system log). */
 
@@ -1124,10 +1158,11 @@ main(void)
 	/* 
 	 * Actually parse HTTP document.
 	 * Then drop privileges to only have file-system access.
+	 * (The pledge will further narrow based on request.)
 	 */
 
-	er = khttp_parse(&r, keys, KEY__MAX, 
-		pages, PAGE__MAX, PAGE_INDEX);
+	er = khttp_parse(&sys.req, keys, 
+		KEY__MAX, pages, PAGE__MAX, PAGE_INDEX);
 
 	if (KCGI_OK != er) {
 		fprintf(stderr, "HTTP parse error: %d\n", er);
@@ -1135,7 +1170,7 @@ main(void)
 	}
 
 	if (-1 == pledge("rpath cpath wpath stdio", NULL)) {
-		kutil_warn(&r, NULL, "pledge");
+		kutil_warn(&sys.req, NULL, "pledge");
 		goto out;
 	}
 
@@ -1144,9 +1179,9 @@ main(void)
 	 * make sure we're an HTML file.
 	 */
 
-	if (KMETHOD_GET != r.method && 
-	    KMETHOD_POST != r.method) {
-		errorpage(&r, "Invalid HTTP method.");
+	if (KMETHOD_GET != sys.req.method && 
+	    KMETHOD_POST != sys.req.method) {
+		errorpage(&sys, "Invalid HTTP method.");
 		goto out;
 	}
 
@@ -1155,42 +1190,42 @@ main(void)
 	 * Then force to be relative and strip trailing slashes.
 	 */
 
-	if (NULL != strstr(r.fullpath, "/..") ||
-	    ('\0' != r.fullpath[0] && '/' != r.fullpath[0])) {
-		errorpage(&r, "Security violation in requested path.");
+	if (NULL != strstr(sys.req.fullpath, "/..") ||
+	    ('\0' != sys.req.fullpath[0] && '/' != sys.req.fullpath[0])) {
+		errorpage(&sys, "Security violation in requested path.");
 		goto out;
 	} 
 
-	path = kstrdup(r.fullpath);
+	path = kstrdup(sys.req.fullpath);
 	if ('\0' != path[0] && '/' == path[strlen(path) - 1])
 		path[strlen(path) - 1] = '\0';
-	cp = path;
-	if ('/' == cp[0])
-		cp++;
+	sys.resource = path;
+	if ('/' == sys.resource[0])
+		sys.resource++;
 
 	/* Open files/directories: cache, cookies, files. */
 
-	if (-1 == (cachefd = open_cachedir(CACHEDIR, &r))) {
-		errorpage(&r, "Cannot open cache root.");
+	if ( ! open_cachedir(&sys, &sys.req)) {
+		errorpage(&sys, "Cannot open cache root.");
 		goto out;
 	}
 
-	if ( ! open_users(&uq, cachefd, CACHEDIR, &r)) {
-		errorpage(&r, "Cannot process password file.");
+	if ( ! open_users(&sys, &sys.req)) {
+		errorpage(&sys, "Cannot process password file.");
 		goto out;
 	}
 
-	if (-1 == (filefd = open_dir
-	    (cachefd, CACHEDIR, FILEDIR, &r))) {
-		errorpage(&r, "Cannot open file root.");
+	if (-1 == (fd = open_dir(&sys, sys.filedir, &sys.req))) {
+		errorpage(&sys, "Cannot open file root.");
 		goto out;
 	}
+	sys.filefd = fd;
 
-	if (-1 == (authfd = open_dir
-	    (cachefd, CACHEDIR, AUTHDIR, &r))) {
-		errorpage(&r, "Cannot open authorisation root.");
+	if (-1 == (fd = open_dir(&sys, sys.authdir, &sys.req))) {
+		errorpage(&sys, "Cannot open authorisation root.");
 		goto out;
 	}
+	sys.authfd = fd;
 
 	/* 
 	 * Now figure out what we're supposed to do here.
@@ -1198,8 +1233,8 @@ main(void)
 	 * Then switch on those actions.
 	 */
 
-	if (KMETHOD_GET != r.method) {
-		if (NULL == (kp = r.fieldmap[KEY_OP])) 
+	if (KMETHOD_GET != sys.req.method) {
+		if (NULL == (kp = sys.req.fieldmap[KEY_OP])) 
 			act = ACTION__MAX;
 		else if (0 == strcmp(kp->parsed.s, "mkfile"))
 			act = ACTION_MKFILE;
@@ -1217,7 +1252,7 @@ main(void)
 		act = ACTION_GET;
 
 	if (ACTION__MAX == act) {
-		errorpage(&r, "Unspecified operation.");
+		errorpage(&sys, "Unspecified operation.");
 		goto out;
 	}
 
@@ -1225,15 +1260,15 @@ main(void)
 
 	if (ACTION_GET == act)
 		if (-1 == pledge("rpath stdio", NULL)) {
-			kutil_warn(&r, NULL, "pledge");
-			errorpage(&r, "System error.");
+			kutil_warn(&sys.req, NULL, "pledge");
+			errorpage(&sys, "System error.");
 			goto out;
 		}
 
 	/* Logging in: jump straight to login page. */
 
 	if (ACTION_LOGIN == act) {
-		post_op_login(authfd, AUTHDIR, uq, &r);
+		post_op_login(&sys);
 		goto out;
 	}
 
@@ -1244,18 +1279,18 @@ main(void)
 	 * kick us to the login page.
 	 */
 
-	if (NULL != uq)
-		if (NULL == r.cookiemap[KEY_SESSCOOKIE] ||
-		    NULL == r.cookiemap[KEY_SESSUSER] ||
-		    ! check_login(&r, uq, authfd, AUTHDIR)) {
-			loginpage(&r, LOGINERR_OK);
+	if (NULL != sys.uq)
+		if (NULL == sys.req.cookiemap[KEY_SESSCOOKIE] ||
+		    NULL == sys.req.cookiemap[KEY_SESSUSER] ||
+		    ! check_login(&sys)) {
+			loginpage(&sys, LOGINERR_OK);
 			goto out;
 		}
 
 	/* Logout only after session is validated. */
 
 	if (ACTION_LOGOUT == act) {
-		post_op_logout(authfd, AUTHDIR, &r);
+		post_op_logout(&sys);
 		goto out;
 	}
 
@@ -1265,12 +1300,12 @@ main(void)
 	 * Disallow non-regular or directory files.
 	 */
 
-	rc = '\0' != cp[0] ? 
-		fstatat(filefd, cp, &st, 0) : 
-		fstat(filefd, &st);
+	rc = '\0' != sys.resource[0] ? 
+		fstatat(sys.filefd, sys.resource, &st, 0) : 
+		fstat(sys.filefd, &st);
 
 	if (-1 == rc) {
-		errorpage(&r, "Resource not found or unavailable.");
+		errorpage(&sys, "Resource not found or unavailable.");
 		goto out;
 	}
 
@@ -1288,8 +1323,8 @@ main(void)
 	 */
 
 	if ((isw = check_canwrite(&st)) < 0) {
-		kutil_warn(&r, NULL, "getgroups");
-		errorpage(&r, "System error.");
+		kutil_warn(&sys.req, NULL, "getgroups");
+		errorpage(&sys, "System error.");
 		goto out;
 	}
 
@@ -1302,41 +1337,41 @@ main(void)
 
 	if (ACTION_GET == act) {
 		if (FTYPE_DIR == ftype)
-			get_dir(filefd, cp, isw, &r, NULL != uq);
+			get_dir(&sys, isw);
 		else
-			get_file(filefd, cp, &r);
+			get_file(&sys);
 	} else {
 		if (FTYPE_DIR != ftype)
-			errorpage(&r, "Post into a regular file.");
+			errorpage(&sys, "Post into a regular file.");
 		else if ( ! isw)
-			errorpage(&r, "Post into readonly directory.");
+			errorpage(&sys, "Post into readonly directory.");
 		else
-			post_op_file(filefd, cp, act, &r);
+			post_op_file(&sys, act);
 	}
 
 out:
 	/* Drop privileges and free memory. */
 
 	if (-1 == pledge("stdio", NULL))
-		kutil_warn(&r, NULL, "pledge");
+		kutil_warn(&sys.req, NULL, "pledge");
 
-	if (NULL != uq) {
-		while (NULL != (u = TAILQ_FIRST(uq))) {
-			TAILQ_REMOVE(uq, u, entries);
+	if (NULL != sys.uq) {
+		while (NULL != (u = TAILQ_FIRST(sys.uq))) {
+			TAILQ_REMOVE(sys.uq, u, entries);
 			free(u->name);
 			free(u->hash);
 			free(u);
 		}
-		free(uq);
+		free(sys.uq);
 	}
 
 	free(path);
-	if (-1 != cachefd)
-		close(cachefd);
-	if (-1 != filefd)
-		close(filefd);
-	if (-1 != authfd)
-		close(authfd);
-	khttp_free(&r);
+	if (-1 != sys.cachefd)
+		close(sys.cachefd);
+	if (-1 != sys.filefd)
+		close(sys.filefd);
+	if (-1 != sys.authfd)
+		close(sys.authfd);
+	khttp_free(&sys.req);
 	return(EXIT_SUCCESS);
 }
