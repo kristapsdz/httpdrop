@@ -36,6 +36,7 @@ enum	page {
 enum	action {
 	ACTION_GET,
 	ACTION_LOGIN,
+	ACTION_LOGOUT,
 	ACTION_MKDIR,
 	ACTION_MKFILE,
 	ACTION_RMDIR,
@@ -105,6 +106,7 @@ struct	dirpage {
 	size_t		 rfilesz; /* regular file count */
 	int		 rdwr; /* is read-writable? */
 	int		 root; /* is document root? */
+	int		 loggedin; /* is logged in? */
 	const char	*fpath; /* request path w/script name */
 	struct kreq	*req; /* HTTP request */
 };
@@ -114,6 +116,7 @@ struct	dirpage {
  */
 struct	errorpage {
 	const char	*msg; /* error message */
+	int		 loggedin; /* is logged in? */
 	struct kreq	*req; /* HTTP request */
 };
 
@@ -211,11 +214,22 @@ errorpage_template(size_t index, void *arg)
 	struct errorpage *pg = arg;
 	struct khtmlreq	  req;
 
-	if (index)
-		return(0);
-
 	khtml_open(&req, pg->req, KHTML_PRETTY);
-	khtml_puts(&req, pg->msg);
+
+	switch (index) {
+	case 0:
+		khtml_puts(&req, pg->req->fullpath);
+		break;
+	case 1:
+		break;
+	case 2:
+		khtml_puts(&req, pg->msg);
+		break;
+	default:
+		khtml_close(&req);
+		return(0);
+	}
+
 	khtml_close(&req);
 	return(1);
 }
@@ -227,7 +241,7 @@ errorpage(struct kreq *r, const char *fmt, ...)
 	char		*buf;
 	va_list		 ap;
 	struct ktemplate t;
-	const char *const ts[] = { "MESSAGE" };
+	const char *const ts[] = { "URL", "CLASSES", "MESSAGE" };
 
 	va_start(ap, fmt);
 	if (-1 == vasprintf(&buf, fmt, ap))
@@ -239,7 +253,7 @@ errorpage(struct kreq *r, const char *fmt, ...)
 
 	memset(&t, 0, sizeof(struct ktemplate));
 	t.key = ts;
-	t.keysz = 1;
+	t.keysz = 3;
 	t.arg = &pg;
 	t.cb = errorpage_template;
 	http_open(r, KHTTP_200);
@@ -265,6 +279,12 @@ fref_cmp(const void *p1, const void *p2)
 	return(strcmp(f1->name, f2->name));
 }
 
+/*
+ * See if the current user can access the "st" resource.
+ * This checks all possible permissions EXCEPT for suid and friends.
+ * It assumes that the user is not root.
+ * (Otherwise the permission check is useless.)
+ */
 static int
 check_canwrite(const struct stat *st)
 {
@@ -297,8 +317,11 @@ get_dir_template(size_t index, void *arg)
 	size_t		 i;
 	char		 classes[1024];
 
+	khtml_open(&req, pg->req, KHTML_PRETTY);
+
 	if (0 == index) {
-		khttp_puts(pg->req, pg->req->fullpath);
+		khtml_puts(&req, pg->req->fullpath);
+		khtml_close(&req);
 		return(1);
 	} else if (1 == index) {
 		classes[0] = '\0';
@@ -308,12 +331,20 @@ get_dir_template(size_t index, void *arg)
 			" root" : " nonroot", sizeof(classes));
 		strlcat(classes, pg->rfilesz > 0 ?
 			" nonempty" : " empty", sizeof(classes));
+		strlcat(classes, pg->loggedin ?
+			" loggedin" : "", sizeof(classes));
 		khttp_puts(pg->req, classes);
+		khtml_close(&req);
 		return(1);
-	} else if (index > 2)
+	} else if (2 == index) {
+		if (NULL != pg->req->cookiemap[KEY_SESSUSER])
+			khtml_puts(&req, pg->req->cookiemap[KEY_SESSUSER]->parsed.s);
+		khtml_close(&req);
+		return(1);
+	} else if (index > 3) {
+		khtml_close(&req);
 		return(0);
-
-	khtml_open(&req, pg->req, KHTML_PRETTY);
+	}
 
 	if (pg->frefsz)
 		khtml_elem(&req, KELEM_UL);
@@ -428,7 +459,7 @@ get_dir_template(size_t index, void *arg)
  * FIXME: use directory mtime and cache control.
  */
 static void
-get_dir(int fd, const char *path, int rdwr, struct kreq *r)
+get_dir(int fd, const char *path, int rdwr, struct kreq *r, int login)
 {
 	int		 nfd;
 	struct stat	 st;
@@ -438,7 +469,7 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	int		 fl = O_RDONLY | O_DIRECTORY;
 	size_t		 filesz = 0, rfilesz = 0, i;
 	struct ktemplate t;
-	const char *const ts[] = { "URL", "CLASSES", "FILES" };
+	const char *const ts[] = { "URL", "CLASSES", "USER", "FILES" };
 	struct fref	*files = NULL;
 	struct dirpage	 dirpage;
 
@@ -508,6 +539,7 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 	dirpage.rdwr = rdwr;
 	dirpage.fpath = fpath;
 	dirpage.req = r;
+	dirpage.loggedin = login;
 	dirpage.root = '\0' == path[0];
 
 	/*
@@ -518,7 +550,7 @@ get_dir(int fd, const char *path, int rdwr, struct kreq *r)
 
 	memset(&t, 0, sizeof(struct ktemplate));
 	t.key = ts;
-	t.keysz = 3;
+	t.keysz = 4;
 	t.arg = &dirpage;
 	t.cb = get_dir_template;
 
@@ -770,6 +802,33 @@ post_op_file(int fd, const char *path,
 out:
 	if (-1 != nfd)
 		close(nfd);
+}
+
+static void
+post_op_logout(int authfd, const char *authpath, struct kreq *r)
+{
+	const char	*secure, *name;
+	char		 buf[32];
+
+	kutil_epoch2str(0, buf, sizeof(buf));
+#ifdef SECURE
+	secure = " secure;";
+#else
+	secure = "";
+#endif
+	name = r->cookiemap[KEY_SESSUSER]->parsed.s;
+
+	if (-1 == unlinkat(authfd, name, 0))
+		kutil_warn(r, name, "%s/%s", authpath, name);
+
+	khttp_head(r, kresps[KRESP_SET_COOKIE],
+		"%s=; path=/;%s HttpOnly; expires=%s", 
+		keys[KEY_SESSCOOKIE].name, secure, buf);
+	khttp_head(r, kresps[KRESP_SET_COOKIE],
+		"%s=; path=/;%s HttpOnly; expires=%s", 
+		keys[KEY_SESSUSER].name, secure, buf);
+	send_301_path(r, "/");
+	kutil_info(r, name, "user logged out");
 }
 
 static void
@@ -1152,6 +1211,8 @@ main(void)
 			act = ACTION_MKDIR;
 		else if (0 == strcmp(kp->parsed.s, "login"))
 			act = ACTION_LOGIN;
+		else if (0 == strcmp(kp->parsed.s, "logout"))
+			act = ACTION_LOGOUT;
 	} else
 		act = ACTION_GET;
 
@@ -1190,6 +1251,13 @@ main(void)
 			loginpage(&r, LOGINERR_OK);
 			goto out;
 		}
+
+	/* Logout only after session is validated. */
+
+	if (ACTION_LOGOUT == act) {
+		post_op_logout(authfd, AUTHDIR, &r);
+		goto out;
+	}
 
 	/*
 	 * See what kind of resource we're asking for by looking it up
@@ -1234,7 +1302,7 @@ main(void)
 
 	if (ACTION_GET == act) {
 		if (FTYPE_DIR == ftype)
-			get_dir(filefd, cp, isw, &r);
+			get_dir(filefd, cp, isw, &r, NULL != uq);
 		else
 			get_file(filefd, cp, &r);
 	} else {
