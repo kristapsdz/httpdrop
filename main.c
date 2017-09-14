@@ -134,6 +134,7 @@ struct	sys {
 	const char	*resource; /* requested resource */
 	struct kreq	 req; /* request */
 	int		 loggedin; /* logged in? */
+	const char	*curuser; /* if logged in (or NULL) */
 };
 
 static const char *const pages[PAGE__MAX] = {
@@ -249,9 +250,9 @@ errorpage_template(size_t index, void *arg)
 		khtml_puts(&req, classes);
 		break;
 	case 2:
-		if (NULL == pg->sys->req.cookiemap[KEY_SESSUSER])
+		if (NULL == pg->sys->curuser)
 			break;
-		khtml_puts(&req, pg->sys->req.cookiemap[KEY_SESSUSER]->parsed.s);
+		khtml_puts(&req, pg->sys->curuser);
 		break;
 	case 3:
 		khtml_puts(&req, pg->msg);
@@ -368,8 +369,8 @@ get_dir_template(size_t index, void *arg)
 		khtml_close(&req);
 		return(1);
 	} else if (2 == index) {
-		if (NULL != pg->sys->req.cookiemap[KEY_SESSUSER])
-			khtml_puts(&req, pg->sys->req.cookiemap[KEY_SESSUSER]->parsed.s);
+		if (NULL != pg->sys->curuser)
+			khtml_puts(&req, pg->sys->curuser);
 		khtml_close(&req);
 		return(1);
 	} else if (index > 3) {
@@ -507,10 +508,10 @@ get_dir(struct sys *sys, int rdwr)
 	if ('\0' != sys->resource[0]) {
 		nfd = openat(sys->filefd, sys->resource, fl, 0);
 		if (-1 == nfd)
-			kutil_warn(&sys->req, NULL, 
+			kutil_warn(&sys->req, sys->curuser, 
 				"%s: openat", sys->resource);
 	} else if (-1 == (nfd = dup(sys->filefd)))
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"%s: dup", sys->resource);
 
 	if (-1 == nfd) {
@@ -524,7 +525,7 @@ get_dir(struct sys *sys, int rdwr)
 	 */
 
 	if (NULL == (dir = fdopendir(nfd))) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"%s: fdopendir", sys->resource);
 		errorpage(sys, "Cannot scan \"%s\".", sys->resource);
 		return;
@@ -612,7 +613,7 @@ get_file(struct sys *sys)
 
 	nfd = openat(sys->filefd, sys->resource, O_RDONLY, 0);
 	if (-1 == nfd) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"%s: openat", sys->resource);
 		errorpage(sys, "Cannot open \"%s\".", sys->resource);
 		return;
@@ -621,6 +622,7 @@ get_file(struct sys *sys)
 	/*
 	 * FIXME: use last-updated with the struct state of the
 	 * file and cross-check.
+	 * FIXME: file size in HTTP headers.
 	 */
 
 	http_open(&sys->req, KHTTP_200);
@@ -669,11 +671,11 @@ post_op_rmfile(struct sys *sys, int nfd, const char *fn)
 {
 
 	if (-1 == unlinkat(nfd, fn, 0) && ENOENT != errno) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"%s/%s: unlinkat", sys->resource, fn);
 		errorpage(sys, "Cannot remove \"%s\".", fn);
 	} else {
-		kutil_info(&sys->req, NULL, 
+		kutil_info(&sys->req, sys->curuser, 
 			"%s/%s: unlink", sys->resource, fn);
 		send_301(sys);
 	}
@@ -690,7 +692,7 @@ post_op_rmdir(struct sys *sys)
 	int	 rc;
 
 	if ('\0' == sys->resource[0]) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"cannot removing root");
 		errorpage(sys, "You cannot remove this directory.");
 		return;
@@ -699,11 +701,11 @@ post_op_rmdir(struct sys *sys)
 	rc = unlinkat(sys->filefd, sys->resource, AT_REMOVEDIR);
 
 	if (-1 == rc && ENOENT != errno) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"%s: unlinkat (dir)", sys->resource);
 		errorpage(sys, "Cannot remove \"%s\".", sys->resource);
 	} else {
-		kutil_info(&sys->req, NULL, 
+		kutil_info(&sys->req, sys->curuser, 
 			"%s: unlink (dir)", sys->resource);
 		newpath = kstrdup(sys->resource);
 		/* Strip to path above. */
@@ -725,11 +727,11 @@ post_op_mkdir(struct sys *sys, int nfd, const char *pn)
 {
 
 	if (-1 == mkdirat(nfd, pn, 0700) && EEXIST != errno) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"%s/%s: mkdirat", sys->resource, pn);
 		errorpage(sys, "Cannot create \"%s\".", pn);
 	} else {
-		kutil_info(&sys->req, NULL, 
+		kutil_info(&sys->req, sys->curuser, 
 			"%s/%s: created", sys->resource, pn);
 		send_301(sys);
 	}
@@ -749,22 +751,22 @@ post_op_mkfile(struct sys *sys, int nfd,
 	ssize_t	 ssz;
 
 	if (-1 == (dfd = openat(nfd, fn, fl, 0600))) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"%s/%s: openat", sys->resource, fn);
 		errorpage(sys, "Cannot open \"%s\".", fn);
 		return;
 	}
 
 	if ((ssz = write(dfd, data, sz)) < 0) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"%s/%s: write", sys->resource, fn);
 		errorpage(sys, "Cannot write to file \"%s\".", fn);
 	} else if ((size_t)ssz < sz) {
-		kutil_warnx(&sys->req, NULL, 
+		kutil_warnx(&sys->req, sys->curuser, 
 			"%s/%s: short write", sys->resource, fn);
 		errorpage(sys, "Cannot write to file \"%s\".", fn);
 	} else {
-		kutil_info(&sys->req, NULL, 
+		kutil_info(&sys->req, sys->curuser, 
 			"%s/%s: wrote %zu bytes", 
 			sys->resource, fn, sz);
 		send_301(sys);
@@ -825,10 +827,10 @@ post_op_file(struct sys *sys, enum action act)
 	if ('\0' != sys->resource[0]) {
 		nfd = openat(sys->filefd, sys->resource, dfl, 0);
 		if (-1 == nfd)
-			kutil_warn(&sys->req, NULL, 
+			kutil_warn(&sys->req, sys->curuser, 
 				"%s: openat", sys->resource);
 	} else if (-1 == (nfd = dup(sys->filefd)))
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, sys->curuser, 
 			"%s: dup", sys->resource);
 
 	if (-1 == nfd) {
@@ -856,7 +858,7 @@ out:
 static void
 post_op_logout(struct sys *sys)
 {
-	const char	*secure, *name;
+	const char	*secure;
 	char		 buf[32];
 
 	kutil_epoch2str(0, buf, sizeof(buf));
@@ -865,10 +867,12 @@ post_op_logout(struct sys *sys)
 #else
 	secure = "";
 #endif
-	name = sys->req.cookiemap[KEY_SESSUSER]->parsed.s;
+	assert(NULL != sys->curuser);
+	assert(sys->loggedin);
 
-	if (-1 == unlinkat(sys->authfd, name, 0))
-		kutil_warn(&sys->req, name, "%s/%s", sys->authdir, name);
+	if (-1 == unlinkat(sys->authfd, sys->curuser, 0))
+		kutil_warn(&sys->req, sys->curuser, 
+			"%s/%s", sys->authdir, sys->curuser);
 
 	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
 		"%s=; path=/;%s HttpOnly; expires=%s", 
@@ -877,7 +881,7 @@ post_op_logout(struct sys *sys)
 		"%s=; path=/;%s HttpOnly; expires=%s", 
 		keys[KEY_SESSUSER].name, secure, buf);
 	send_301_path(sys, "/");
-	kutil_info(&sys->req, name, "user logged out");
+	kutil_info(&sys->req, sys->curuser, "user logged out");
 }
 
 static void
@@ -1161,6 +1165,8 @@ check_login(struct sys *sys, const struct userq *uq)
 
 	if ( ! (sys->loggedin = (cookie == ccookie)))
 		kutil_warn(&sys->req, name, "cookie token mismatch");
+	else
+		sys->curuser = name;
 
 	fclose(f);
 	return(sys->loggedin);
@@ -1325,8 +1331,11 @@ main(void)
 
 	/* Logout only after session is validated. */
 
-	if (ACTION_LOGOUT == act) {
+	if (ACTION_LOGOUT == act && sys.loggedin) {
 		post_op_logout(&sys);
+		goto out;
+	} else if (ACTION_LOGOUT == act) {
+		send_301_path(&sys, "/");
 		goto out;
 	}
 
