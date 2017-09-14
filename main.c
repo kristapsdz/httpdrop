@@ -56,6 +56,15 @@ enum	key {
 	KEY__MAX
 };
 
+enum	templ {
+	TEMPL_URL,
+	TEMPL_CLASSES,
+	TEMPL_USER,
+	TEMPL_MESSAGE,
+	TEMPL_FILES,
+	TEMPL__MAX
+};
+
 enum	ftype {
 	FTYPE_DIR, /* directory */
 	FTYPE_FILE, /* regular file */
@@ -152,6 +161,14 @@ static const struct kvalid keys[KEY__MAX] = {
 	{ kvalid_stringne, "user" }, /* KEY_USER */
 };
 
+static const char *const templs[TEMPL__MAX] = {
+	"URL", /* TEMPL_URL */
+	"CLASSES", /* TEMPL_CLASSES */
+	"USER", /* TEMPL_USER */
+	"MESSAGE", /* TEMPL_MESSAGE */
+	"FILES", /* TEMPL_FILES */
+};
+
 static void
 errorpage(struct sys *, const char *, ...) 
 	__attribute__((format(printf, 2, 3)));
@@ -175,6 +192,9 @@ http_open(struct kreq *r, enum khttp code)
 	khttp_body(r);
 }
 
+/*
+ * Fill in templates to the login page (PAGE_LOGIN).
+ */
 static int
 loginpage_template(size_t index, void *arg)
 {
@@ -184,10 +204,10 @@ loginpage_template(size_t index, void *arg)
 	khtml_open(&req, &pg->sys->req, KHTML_PRETTY);
 
 	switch (index) {
-	case 0:
+	case TEMPL_URL:
 		khtml_puts(&req, pg->sys->req.fullpath);
 		break;
-	case 1:
+	case TEMPL_CLASSES:
 		switch (pg->error) {
 		case LOGINERR_BADCREDS:
 			khtml_puts(&req, "error-badcreds");
@@ -211,25 +231,32 @@ loginpage_template(size_t index, void *arg)
 	return(1);
 }
 
+/*
+ * Login page.
+ * Formats an error (or no error) depending on "error".
+ * Emits HTTP 200 with the page contents.
+ */
 static void
 loginpage(struct sys *sys, enum loginerr error)
 {
 	struct ktemplate t;
 	struct loginpage loginpage;
-	const char *const ts[] = { "URL", "CLASS" };
 
 	loginpage.sys = sys;
 	loginpage.error = error;
 
 	memset(&t, 0, sizeof(struct ktemplate));
-	t.key = ts;
-	t.keysz = 2;
+	t.key = templs;
+	t.keysz = TEMPL__MAX;
 	t.arg = &loginpage;
 	t.cb = loginpage_template;
 	http_open(&sys->req, KHTTP_200);
 	khttp_template(&sys->req, &t, DATADIR "/loginpage.xml");
 }
 
+/*
+ * Fill in templates to the error page.
+ */
 static int
 errorpage_template(size_t index, void *arg)
 {
@@ -241,20 +268,20 @@ errorpage_template(size_t index, void *arg)
 	khtml_open(&req, &pg->sys->req, KHTML_PRETTY);
 
 	switch (index) {
-	case 0:
+	case TEMPL_URL:
 		khtml_puts(&req, pg->sys->req.fullpath);
 		break;
-	case 1:
+	case TEMPL_CLASSES:
 		strlcat(classes, pg->sys->loggedin ?
 			" loggedin" : "", sizeof(classes));
 		khtml_puts(&req, classes);
 		break;
-	case 2:
+	case TEMPL_USER:
 		if (NULL == pg->sys->curuser)
 			break;
 		khtml_puts(&req, pg->sys->curuser);
 		break;
-	case 3:
+	case TEMPL_MESSAGE:
 		khtml_puts(&req, pg->msg);
 		break;
 	default:
@@ -266,6 +293,11 @@ errorpage_template(size_t index, void *arg)
 	return(1);
 }
 
+/*
+ * Error page.
+ * Formats an error message depending on varargs.
+ * Emits HTTP 200 with the page contents.
+ */
 static void
 errorpage(struct sys *sys, const char *fmt, ...)
 {
@@ -273,7 +305,6 @@ errorpage(struct sys *sys, const char *fmt, ...)
 	char		*buf;
 	va_list		 ap;
 	struct ktemplate t;
-	const char *const ts[] = { "URL", "CLASSES", "USER", "MESSAGE" };
 
 	va_start(ap, fmt);
 	if (-1 == vasprintf(&buf, fmt, ap))
@@ -284,8 +315,8 @@ errorpage(struct sys *sys, const char *fmt, ...)
 	pg.sys = sys;
 
 	memset(&t, 0, sizeof(struct ktemplate));
-	t.key = ts;
-	t.keysz = 4;
+	t.key = templs;
+	t.keysz = TEMPL__MAX;
 	t.arg = &pg;
 	t.cb = errorpage_template;
 	http_open(&sys->req, KHTTP_200);
@@ -349,14 +380,15 @@ get_dir_template(size_t index, void *arg)
 	size_t		 i;
 	char		 classes[1024];
 
+	classes[0] = '\0';
 	khtml_open(&req, &pg->sys->req, KHTML_PRETTY);
 
-	if (0 == index) {
+	switch (index) {
+	case TEMPL_URL:
 		khtml_puts(&req, pg->sys->req.fullpath);
 		khtml_close(&req);
 		return(1);
-	} else if (1 == index) {
-		classes[0] = '\0';
+	case TEMPL_CLASSES:
 		strlcat(classes, pg->rdwr ?
 			" mutable" : " immutable", sizeof(classes));
 		strlcat(classes, pg->root ?
@@ -368,12 +400,14 @@ get_dir_template(size_t index, void *arg)
 		khtml_puts(&req, classes);
 		khtml_close(&req);
 		return(1);
-	} else if (2 == index) {
+	case TEMPL_USER:
 		if (NULL != pg->sys->curuser)
 			khtml_puts(&req, pg->sys->curuser);
 		khtml_close(&req);
 		return(1);
-	} else if (index > 3) {
+	case TEMPL_FILES:
+		break;
+	default:
 		khtml_close(&req);
 		return(0);
 	}
@@ -501,7 +535,6 @@ get_dir(struct sys *sys, int rdwr)
 	int		 fl = O_RDONLY | O_DIRECTORY;
 	size_t		 filesz = 0, rfilesz = 0, i;
 	struct ktemplate t;
-	const char *const ts[] = { "URL", "CLASSES", "USER", "FILES" };
 	struct fref	*files = NULL;
 	struct dirpage	 dirpage;
 
@@ -586,8 +619,8 @@ get_dir(struct sys *sys, int rdwr)
 	 */
 
 	memset(&t, 0, sizeof(struct ktemplate));
-	t.key = ts;
-	t.keysz = 4;
+	t.key = templs;
+	t.keysz = TEMPL__MAX;
 	t.arg = &dirpage;
 	t.cb = get_dir_template;
 
