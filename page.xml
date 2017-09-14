@@ -16,7 +16,7 @@
 	     The encompassing <body> will have a "mutable" if the current
 	     directory is writable; else, "immutable".
 	 -->
-	<body class="@@CLASSES@@">
+	<body id="page" class="@@CLASSES@@">
 		<div class="has-login container">
 			<nav class="navbar is-transparent">
 				<div class="navbar-brand">

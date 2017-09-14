@@ -9,7 +9,7 @@
 		<link href="/httpdrop.css" rel="stylesheet" />
 		<script src="/httpdrop.js"></script>
 	</head>
-	<body id="loginpage" class="@@CLASS@@">
+	<body id="loginpage" class="@@CLASSES@@">
 		<section class="hero is-fullheight">
 			<div class="hero-body">
 				<div class="container">
