@@ -125,7 +125,6 @@ struct	errorpage {
  * case are valid.
  */
 struct	sys {
-	struct userq	*uq; /* system users (or NULL) */
 	const char	*cachedir; /* root of system files */
 	const char	*filedir; /* root of files */
 	const char	*authdir; /* root of cookies */
@@ -506,13 +505,16 @@ get_dir(struct sys *sys, int rdwr)
 	struct dirpage	 dirpage;
 
 	if ('\0' != sys->resource[0]) {
-		if (-1 == (nfd = openat(sys->filefd, sys->resource, fl, 0)))
-			kutil_warn(&sys->req, NULL, "%s: openat", sys->resource);
+		nfd = openat(sys->filefd, sys->resource, fl, 0);
+		if (-1 == nfd)
+			kutil_warn(&sys->req, NULL, 
+				"%s: openat", sys->resource);
 	} else if (-1 == (nfd = dup(sys->filefd)))
-		kutil_warn(&sys->req, NULL, "%s: dup", sys->resource);
+		kutil_warn(&sys->req, NULL, 
+			"%s: dup", sys->resource);
 
 	if (-1 == nfd) {
-		errorpage(sys, "Cannot open directory \"%s\".", sys->resource);
+		errorpage(sys, "Cannot open \"%s\".", sys->resource);
 		return;
 	}
 
@@ -522,8 +524,9 @@ get_dir(struct sys *sys, int rdwr)
 	 */
 
 	if (NULL == (dir = fdopendir(nfd))) {
-		kutil_warn(&sys->req, NULL, "%s: fdopendir", sys->resource);
-		errorpage(sys, "Cannot scan directory \"%s\".", sys->resource);
+		kutil_warn(&sys->req, NULL, 
+			"%s: fdopendir", sys->resource);
+		errorpage(sys, "Cannot scan \"%s\".", sys->resource);
 		return;
 	}
 
@@ -547,7 +550,9 @@ get_dir(struct sys *sys, int rdwr)
 		/* Get file information... */
 
 		kasprintf(&fpath, "%s/%s%s%s", sys->req.pname, 
-			sys->resource, '\0' != sys->resource[0] ? "/" : "", dp->d_name);
+			sys->resource, 
+			'\0' != sys->resource[0] ? "/" : "", 
+			dp->d_name);
 		files = kreallocarray(files, 
 			filesz + 1, sizeof(struct fref));
 		files[filesz].st = st;
@@ -607,8 +612,9 @@ get_file(struct sys *sys)
 
 	nfd = openat(sys->filefd, sys->resource, O_RDONLY, 0);
 	if (-1 == nfd) {
-		kutil_warn(&sys->req, NULL, "%s: openat", sys->resource);
-		errorpage(sys, "Cannot open file \"%s\".", sys->resource);
+		kutil_warn(&sys->req, NULL, 
+			"%s: openat", sys->resource);
+		errorpage(sys, "Cannot open \"%s\".", sys->resource);
 		return;
 	}
 
@@ -663,10 +669,12 @@ post_op_rmfile(struct sys *sys, int nfd, const char *fn)
 {
 
 	if (-1 == unlinkat(nfd, fn, 0) && ENOENT != errno) {
-		kutil_warn(&sys->req, NULL, "%s/%s: unlinkat", sys->resource, fn);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s: unlinkat", sys->resource, fn);
 		errorpage(sys, "Cannot remove \"%s\".", fn);
 	} else {
-		kutil_info(&sys->req, NULL, "%s/%s: unlink", sys->resource, fn);
+		kutil_info(&sys->req, NULL, 
+			"%s/%s: unlink", sys->resource, fn);
 		send_301(sys);
 	}
 }
@@ -679,19 +687,26 @@ static void
 post_op_rmdir(struct sys *sys)
 {
 	char	*newpath, *cp;
+	int	 rc;
 
 	if ('\0' == sys->resource[0]) {
-		kutil_warn(&sys->req, NULL, "tried removing root");
-		errorpage(sys, "You cannot remove the root directory.");
+		kutil_warn(&sys->req, NULL, 
+			"cannot removing root");
+		errorpage(sys, "You cannot remove this directory.");
 		return;
 	}
 
-	if (-1 == unlinkat(sys->filefd, sys->resource, AT_REMOVEDIR) && ENOENT != errno) {
-		kutil_warn(&sys->req, NULL, "%s: unlinkat (dir)", sys->resource);
+	rc = unlinkat(sys->filefd, sys->resource, AT_REMOVEDIR);
+
+	if (-1 == rc && ENOENT != errno) {
+		kutil_warn(&sys->req, NULL, 
+			"%s: unlinkat (dir)", sys->resource);
 		errorpage(sys, "Cannot remove \"%s\".", sys->resource);
 	} else {
-		kutil_info(&sys->req, NULL, "%s: unlink (dir)", sys->resource);
+		kutil_info(&sys->req, NULL, 
+			"%s: unlink (dir)", sys->resource);
 		newpath = kstrdup(sys->resource);
+		/* Strip to path above. */
 		if (NULL != (cp = strrchr(newpath, '/')))
 			*cp = '\0';
 		else
@@ -710,42 +725,47 @@ post_op_mkdir(struct sys *sys, int nfd, const char *pn)
 {
 
 	if (-1 == mkdirat(nfd, pn, 0700) && EEXIST != errno) {
-		kutil_warn(&sys->req, NULL, "%s/%s: mkdirat", sys->resource, pn);
-		errorpage(sys, "Cannot create directory \"%s\".", pn);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s: mkdirat", sys->resource, pn);
+		errorpage(sys, "Cannot create \"%s\".", pn);
 	} else {
-		kutil_info(&sys->req, NULL, "%s/%s: created", sys->resource, pn);
+		kutil_info(&sys->req, NULL, 
+			"%s/%s: created", sys->resource, pn);
 		send_301(sys);
 	}
 }
 
 /*
- * Write the file "fn" relative to the current path "path" with file
- * descriptor "nfd".
+ * Write the file "fn" with file descriptor "nfd".
  * Use file contents "data" of size "sz".
  * FIXME: have this perform after closing the connection, else it might
  * block the connection.
  */
 static void
-post_op_mkfile(struct sys *sys, int nfd, const char *fn, 
-	const char *data, size_t sz)
+post_op_mkfile(struct sys *sys, int nfd, 
+	const char *fn, const char *data, size_t sz)
 {
 	int	 dfd, fl = O_WRONLY|O_TRUNC|O_CREAT;
 	ssize_t	 ssz;
 
 	if (-1 == (dfd = openat(nfd, fn, fl, 0600))) {
-		kutil_warn(&sys->req, NULL, "%s/%s: openat", sys->resource, fn);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s: openat", sys->resource, fn);
 		errorpage(sys, "Cannot open \"%s\".", fn);
 		return;
 	}
 
 	if ((ssz = write(dfd, data, sz)) < 0) {
-		kutil_warn(&sys->req, NULL, "%s/%s: write", sys->resource, fn);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s: write", sys->resource, fn);
 		errorpage(sys, "Cannot write to file \"%s\".", fn);
 	} else if ((size_t)ssz < sz) {
-		kutil_warnx(&sys->req, NULL, "%s/%s: short write", sys->resource, fn);
+		kutil_warnx(&sys->req, NULL, 
+			"%s/%s: short write", sys->resource, fn);
 		errorpage(sys, "Cannot write to file \"%s\".", fn);
 	} else {
-		kutil_info(&sys->req, NULL, "%s/%s: wrote %zu bytes", 
+		kutil_info(&sys->req, NULL, 
+			"%s/%s: wrote %zu bytes", 
 			sys->resource, fn, sz);
 		send_301(sys);
 	}
@@ -760,7 +780,6 @@ post_op_mkfile(struct sys *sys, int nfd, const char *fn,
 static void
 post_op_file(struct sys *sys, enum action act)
 {
-	struct kpair	*kpf;
 	int		 nfd = -1;
 	int		 dfl = O_RDONLY|O_DIRECTORY;
 	const char	*target;
@@ -804,28 +823,31 @@ post_op_file(struct sys *sys, enum action act)
 	/* Open the path we're writing into. */
 
 	if ('\0' != sys->resource[0]) {
-		if (-1 == (nfd = openat(sys->filefd, sys->resource, dfl, 0)))
-			kutil_warn(&sys->req, NULL, "%s: openat", sys->resource);
+		nfd = openat(sys->filefd, sys->resource, dfl, 0);
+		if (-1 == nfd)
+			kutil_warn(&sys->req, NULL, 
+				"%s: openat", sys->resource);
 	} else if (-1 == (nfd = dup(sys->filefd)))
-		kutil_warn(&sys->req, NULL, "%s: dup", sys->resource);
+		kutil_warn(&sys->req, NULL, 
+			"%s: dup", sys->resource);
 
 	if (-1 == nfd) {
-		errorpage(sys, "Cannot open directory \"%s\".", sys->resource);
+		errorpage(sys, "Cannot open \"%s\".", sys->resource);
 		goto out;
 	}
 
 	/* Now actually perform our operations. */
 
-	if (ACTION_MKFILE == act) {
-		kpf = sys->req.fieldmap[KEY_FILE];
-		post_op_mkfile(sys, nfd, target, kpf->val, kpf->valsz);
-	} else if (ACTION_RMFILE == act) {
+	if (ACTION_MKFILE == act)
+		post_op_mkfile(sys, nfd, target, 
+			sys->req.fieldmap[KEY_FILE]->val, 
+			sys->req.fieldmap[KEY_FILE]->valsz);
+	else if (ACTION_RMFILE == act)
 		post_op_rmfile(sys, nfd, target);
-	} else if (ACTION_RMDIR == act) {
+	else if (ACTION_RMDIR == act)
 		post_op_rmdir(sys);
-	} else  {
+	else
 		post_op_mkdir(sys, nfd, target);
-	}
 out:
 	if (-1 != nfd)
 		close(nfd);
@@ -859,7 +881,7 @@ post_op_logout(struct sys *sys)
 }
 
 static void
-post_op_login(struct sys *sys)
+post_op_login(struct sys *sys, const struct userq *uq)
 {
 	int	 	 fd;
 	const char	*name, *pass, *secure;
@@ -877,21 +899,20 @@ post_op_login(struct sys *sys)
 	 * Look up the username, make sure it exists, then check against
 	 * the given hash using the crypt_checkpass function, which does
 	 * the heavy lefting for us.
+	 * Don't report errors: baddies could spam the log.
 	 */
 
 	name = sys->req.fieldmap[KEY_USER]->parsed.s;
 	pass = sys->req.fieldmap[KEY_PASSWD]->parsed.s;
 
-	TAILQ_FOREACH(u, sys->uq, entries)
+	TAILQ_FOREACH(u, uq, entries)
 		if (0 == strcasecmp(u->name, name))
 			break;
 
 	if (NULL == u) {
-		kutil_warnx(&sys->req, NULL, "user not found: %s", name);
 		loginpage(sys, LOGINERR_BADCREDS);
 		return;
 	} else if (crypt_checkpass(pass, u->hash)) {
-		kutil_warnx(&sys->req, name, "incorrect password");
 		loginpage(sys, LOGINERR_BADCREDS);
 		return;
 	}
@@ -907,12 +928,14 @@ post_op_login(struct sys *sys)
 	fd = openat(sys->authfd, name, 
 		O_CREAT | O_RDWR | O_TRUNC, 0600);
 	if (-1 == fd) {
-		kutil_warn(&sys->req, NULL, "%s/%s", sys->authdir, name);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s", sys->authdir, name);
 		loginpage(sys, LOGINERR_SYSERR);
 		return;
 	}
 	if (write(fd, buf, strlen(buf)) < 0) {
-		kutil_warn(&sys->req, NULL, "%s/%s", sys->authdir, name);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s", sys->authdir, name);
 		loginpage(sys, LOGINERR_SYSERR);
 		close(fd);
 		return;
@@ -946,36 +969,35 @@ post_op_login(struct sys *sys)
  * Return the file descriptor on success else -1.
  */
 static int
-open_dir(const struct sys *sys, const char *dir, struct kreq *r)
+open_dir(struct sys *sys, const char *dir)
 {
-	int	 	 fd;
+	int	 fd, fl = O_RDONLY | O_DIRECTORY;
 
 	if ('\0' == dir[0]) {
-		kutil_warn(r, NULL, "zero-length path name");
+		kutil_warn(&sys->req, NULL, 
+			"zero-length pathname");
 		return(-1);
 	} else if ('/' == dir[0]) {
-		kutil_warn(r, NULL, "%s: absolute path name", dir);
+		kutil_warn(&sys->req, NULL, 
+			"%s: absolute path name", dir);
 		return(-1);
 	}
 
-	fd = openat(sys->cachefd, dir, O_RDONLY | O_DIRECTORY, 0);
+	fd = openat(sys->cachefd, dir, fl, 0);
 
 	if (-1 == fd && ENOENT == errno) {
-		kutil_info(r, NULL, "%s/%s: "
-			"creating path", sys->cachedir, dir);
+		kutil_info(&sys->req, NULL, 
+			"%s/%s: creating path", 
+			sys->cachedir, dir);
 		if (-1 == mkdirat(sys->cachefd, dir, 0700)) {
-			kutil_warn(r, NULL, "%s/%s: "
-				"mkdir", sys->cachedir, dir);
+			kutil_warn(&sys->req, NULL, 
+				"%s/%s: mkdir", sys->cachedir, dir);
 			return(-1);
 		}
-		fd = openat(sys->cachefd, dir, 
-			O_RDONLY | O_DIRECTORY, 0);
-	}
-
-	if (-1 == fd) {
-		kutil_warn(r, NULL, "%s/%s: open", sys->cachedir, dir);
-		return(-1);
-	}
+		fd = openat(sys->cachefd, dir, fl, 0);
+	} else if (-1 == fd)
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s: open", sys->cachedir, dir);
 
 	return(fd);
 }
@@ -983,13 +1005,13 @@ open_dir(const struct sys *sys, const char *dir, struct kreq *r)
 /*
  * Try to open the file ".htpasswd" within the cache directory.
  * Return zero on fatal error, non-zero on success.
- * The sys "uq" field will not be allocated if the file was not found;
+ * The "uq" field will not be allocated if the file was not found;
  * otherwise, it will be allocated and filled with a (possibly-zero)
  * user entries.
  * Note that "uq" might be allocated on failure.
  */
 static int
-open_users(struct sys *sys, struct kreq *r)
+open_users(struct sys *sys, struct userq **uq)
 {
 	int		 fd;
 	FILE		*f;
@@ -1002,19 +1024,21 @@ open_users(struct sys *sys, struct kreq *r)
 	fd = openat(sys->cachefd, fn, O_RDONLY, 0);
 
 	if (-1 == fd && ENOENT != errno) {
-		kutil_warn(r, NULL, "%s/%s: open", sys->cachedir, fn);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s: open", sys->cachedir, fn);
 		return(0);
 	} else if (-1 == fd) 
 		return(1);
 
 	if (NULL == (f = fdopen(fd, "r"))) {
-		kutil_warn(r, NULL, "%s/%s: fopen", sys->cachedir, fn);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s: fopen", sys->cachedir, fn);
 		close(fd);
 		return(0);
 	}
 
-	sys->uq = kmalloc(sizeof(struct userq));
-	TAILQ_INIT(sys->uq);
+	*uq = kmalloc(sizeof(struct userq));
+	TAILQ_INIT(*uq);
 
 	while (NULL != (buf = fgetln(f, &len))) {
 		if ('\n' != buf[len - 1])
@@ -1022,8 +1046,9 @@ open_users(struct sys *sys, struct kreq *r)
 		buf[len - 1] = '\0';
 		user = buf;
 		if (NULL == (pass = strchr(user, ':'))) {
-			kutil_warn(r, NULL, "%s/%s:%zu: bad "
-				"syntax", sys->cachedir, fn, line);
+			kutil_warn(&sys->req, NULL, 
+				"%s/%s:%zu: bad syntax", 
+				sys->cachedir, fn, line);
 			fclose(f);
 			return(0);
 		}
@@ -1031,7 +1056,7 @@ open_users(struct sys *sys, struct kreq *r)
 		u = kcalloc(1, sizeof(struct user));
 		u->name = kstrdup(user);
 		u->hash = kstrdup(pass);
-		TAILQ_INSERT_TAIL(sys->uq, u, entries);
+		TAILQ_INSERT_TAIL(*uq, u, entries);
 		line++;
 	}
 
@@ -1041,50 +1066,51 @@ open_users(struct sys *sys, struct kreq *r)
 
 /*
  * Open our root directory, which must be absolute.
- * All operations will use "openat" or the equivalent beneath this path.
+ * All subsequent operations will be relative to this path.
  * Returns zero on failure, non-zero on success.
  */
 static int
-open_cachedir(struct sys *sys, struct kreq *r)
+open_cachedir(struct sys *sys)
 {
+	int	 fl = O_RDONLY | O_DIRECTORY;
 
 	if ('\0' == sys->cachedir[0]) {
-		kutil_warn(r, NULL, "zero-length cache path name");
+		kutil_warn(&sys->req, NULL, 
+			"zero-length cache pathname");
 		return(0);
 	} else if ('/' != sys->cachedir[0]) {
-		kutil_warn(r, NULL, "%s: relative "
-			"cache path name", sys->cachedir);
+		kutil_warn(&sys->req, NULL, 
+			"%s: relative cache pathname", 
+			sys->cachedir);
 		return(0);
 	}
 
-	sys->cachefd = open(sys->cachedir, O_RDONLY | O_DIRECTORY, 0);
+	sys->cachefd = open(sys->cachedir, fl, 0);
 
 	if (-1 == sys->cachefd && ENOENT == errno) {
-		kutil_info(r, NULL, "%s: creating "
-			"cache directory", sys->cachedir);
+		kutil_info(&sys->req, NULL, 
+			"%s: creating cache directory", 
+			sys->cachedir);
 		if (-1 == mkdir(sys->cachedir, 0700)) {
-			kutil_warn(r, NULL, "%s: mkdir", sys->cachedir);
+			kutil_warn(&sys->req, NULL, 
+				"%s: mkdir", sys->cachedir);
 			return(0);
 		}
-		sys->cachefd = open(sys->cachedir, 
-			O_RDONLY | O_DIRECTORY, 0);
-	}
+		sys->cachefd = open(sys->cachedir, fl, 0);
+	} else if (-1 == sys->cachefd)
+		kutil_warn(&sys->req, NULL, 
+			"%s: open", sys->cachedir);
 
-	if (-1 == sys->cachefd) {
-		kutil_warn(r, NULL, "%s: open", sys->cachedir);
-		return(0);
-	}
-
-	return(1);
+	return(-1 != sys->cachefd);
 }
 
 /*
- * Look in "dir" (opened as "fd") for the cookie registered to the
- * current user (who must exist) and cross-check its unique token.
+ * Look in the authdir the cookie registered to the current user (who
+ * must exist) and cross-check its unique token.
  * Returns zero on failure, non-zero on success.
  */
 static int
-check_login(struct sys *sys)
+check_login(struct sys *sys, const struct userq *uq)
 {
 	const char	*name;
 	int		 nfd;
@@ -1094,40 +1120,49 @@ check_login(struct sys *sys)
 
 	assert(NULL != sys->req.cookiemap[KEY_SESSCOOKIE]);
 	assert(NULL != sys->req.cookiemap[KEY_SESSUSER]);
+
 	name = sys->req.cookiemap[KEY_SESSUSER]->parsed.s;
 	cookie = sys->req.cookiemap[KEY_SESSCOOKIE]->parsed.i;
 
-	/* Loop for user in known users. */
+	/* 
+	 * Loop for user in known users.
+	 * If we don't find one, just exit.
+	 * This prevents an attacker from spamming the log.
+	 */
 
-	TAILQ_FOREACH(u, sys->uq, entries)
+	TAILQ_FOREACH(u, uq, entries)
 		if (0 == strcasecmp(u->name, name))
 			break;
 
-	if (NULL == u) {
-		kutil_warnx(&sys->req, NULL, "unknown user: %s", name);
+	if (NULL == u)
 		return(0);
-	}
 
 	if (-1 == (nfd = openat(sys->authfd, name, O_RDONLY, 0))) {
-		kutil_warn(&sys->req, NULL, "%s/%s", sys->authdir, name);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s", sys->authdir, name);
 		return(0);
 	}
 
+	/* Read the cookie token from the file. */
+
 	if (NULL == (f = fdopen(nfd, "r"))) {
-		kutil_warn(&sys->req, NULL, "%s/%s", sys->authdir, name);
+		kutil_warn(&sys->req, NULL, 
+			"%s/%s", sys->authdir, name);
 		close(nfd);
 		return(0);
 	} else if (1 != fscanf(f, "%" PRId64, &ccookie)) {
-		kutil_warnx(&sys->req, NULL, "%s/%s: malformed", sys->authdir, name);
+		kutil_warnx(&sys->req, NULL, 
+			"%s/%s: malformed", sys->authdir, name);
 		fclose(f);
 		return(0);
 	}
 
-	fclose(f);
-	
+	/* Does our cookie token match the one given? */
+
 	if ( ! (sys->loggedin = (cookie == ccookie)))
 		kutil_warn(&sys->req, name, "cookie token mismatch");
 
+	fclose(f);
 	return(sys->loggedin);
 }
 
@@ -1142,6 +1177,7 @@ main(void)
 	struct user	*u;
 	struct kpair	*kp;
 	enum action	 act = ACTION__MAX;
+	struct userq	*uq = NULL;
 	struct sys	 sys;
 
 	memset(&sys, 0, sizeof(struct sys));
@@ -1205,23 +1241,23 @@ main(void)
 
 	/* Open files/directories: cache, cookies, files. */
 
-	if ( ! open_cachedir(&sys, &sys.req)) {
+	if ( ! open_cachedir(&sys)) {
 		errorpage(&sys, "Cannot open cache root.");
 		goto out;
 	}
 
-	if ( ! open_users(&sys, &sys.req)) {
+	if ( ! open_users(&sys, &uq)) {
 		errorpage(&sys, "Cannot process password file.");
 		goto out;
 	}
 
-	if (-1 == (fd = open_dir(&sys, sys.filedir, &sys.req))) {
+	if (-1 == (fd = open_dir(&sys, sys.filedir))) {
 		errorpage(&sys, "Cannot open file root.");
 		goto out;
 	}
 	sys.filefd = fd;
 
-	if (-1 == (fd = open_dir(&sys, sys.authdir, &sys.req))) {
+	if (-1 == (fd = open_dir(&sys, sys.authdir))) {
 		errorpage(&sys, "Cannot open authorisation root.");
 		goto out;
 	}
@@ -1268,7 +1304,7 @@ main(void)
 	/* Logging in: jump straight to login page. */
 
 	if (ACTION_LOGIN == act) {
-		post_op_login(&sys);
+		post_op_login(&sys, uq);
 		goto out;
 	}
 
@@ -1279,10 +1315,10 @@ main(void)
 	 * kick us to the login page.
 	 */
 
-	if (NULL != sys.uq)
+	if (NULL != uq)
 		if (NULL == sys.req.cookiemap[KEY_SESSCOOKIE] ||
 		    NULL == sys.req.cookiemap[KEY_SESSUSER] ||
-		    ! check_login(&sys)) {
+		    ! check_login(&sys, uq)) {
 			loginpage(&sys, LOGINERR_OK);
 			goto out;
 		}
@@ -1355,14 +1391,14 @@ out:
 	if (-1 == pledge("stdio", NULL))
 		kutil_warn(&sys.req, NULL, "pledge");
 
-	if (NULL != sys.uq) {
-		while (NULL != (u = TAILQ_FIRST(sys.uq))) {
-			TAILQ_REMOVE(sys.uq, u, entries);
+	if (NULL != uq) {
+		while (NULL != (u = TAILQ_FIRST(uq))) {
+			TAILQ_REMOVE(uq, u, entries);
 			free(u->name);
 			free(u->hash);
 			free(u);
 		}
-		free(sys.uq);
+		free(uq);
 	}
 
 	free(path);
