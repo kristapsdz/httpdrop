@@ -453,7 +453,6 @@ get_dir_template(size_t index, void *arg)
 		if (pg->rdwr && ! (S_ISDIR(ff->st.st_mode))) {
 			khtml_attr(&req, KELEM_FORM,
 				KATTR_METHOD, "post",
-				KATTR_CLASS, "icon",
 				KATTR_ACTION, pg->fpath,
 				KATTR__MAX);
 			khtml_attr(&req, KELEM_INPUT,
@@ -478,14 +477,14 @@ get_dir_template(size_t index, void *arg)
 			if (check_canwrite(&ff->st) > 0)
 				khtml_attr(&req, KELEM_BUTTON,
 					KATTR_CLASS, "button "
-						"is-danger is-outlined",
+						"is-danger is-small",
 					KATTR_TITLE, "Delete",
 					KATTR_TYPE, "submit",
 					KATTR__MAX);
 			else
 				khtml_attr(&req, KELEM_BUTTON,
 					KATTR_CLASS, "button "
-						"is-danger is-outlined",
+						"is-danger is-small",
 					KATTR_TITLE, "Delete",
 					KATTR_DISABLED, "disabled",
 					KATTR_TYPE, "submit",

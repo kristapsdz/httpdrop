@@ -9,6 +9,7 @@
 #files ul li			{ padding: 4pt; }
 #files ul li + li		{ margin-top: 4pt; }
 #files ul li:nth-child(odd)	{ background-color: #f0f0f0; }
+#files button.is-small		{ padding: 0; height: 1.7em; width: 1.7em; }
 #nofilemods, #filemods		{ padding: 0 1em; }
 #filemods .file-name .fa	{ vertical-align: middle; }
 #filemods > form		{ margin: 1em auto; }
