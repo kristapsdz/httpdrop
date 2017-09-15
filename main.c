@@ -179,17 +179,26 @@ errorpage(struct sys *, const char *, ...)
  * Then emit the body indicator.
  */
 static void
-http_open(struct kreq *r, enum khttp code)
+http_open_mime(struct kreq *r, enum khttp code, enum kmime mime)
 {
 
 	khttp_head(r, kresps[KRESP_STATUS], 
 		"%s", khttps[code]);
+	if (KMIME__MAX == mime)
+		mime = KMIME_APP_OCTET_STREAM;
 	khttp_head(r, kresps[KRESP_CONTENT_TYPE], 
-		"%s", kmimetypes[r->mime]);
+		"%s", kmimetypes[mime]);
 	khttp_head(r, "X-Content-Type-Options", "nosniff");
 	khttp_head(r, "X-Frame-Options", "DENY");
 	khttp_head(r, "X-XSS-Protection", "1; mode=block");
 	khttp_body(r);
+}
+
+static void
+http_open(struct kreq *r, enum khttp code)
+{
+
+	http_open_mime(r, code, r->mime);
 }
 
 /*
@@ -250,7 +259,7 @@ loginpage(struct sys *sys, enum loginerr error)
 	t.keysz = TEMPL__MAX;
 	t.arg = &loginpage;
 	t.cb = loginpage_template;
-	http_open(&sys->req, KHTTP_200);
+	http_open_mime(&sys->req, KHTTP_200, KMIME_TEXT_HTML);
 	khttp_template(&sys->req, &t, DATADIR "/loginpage.xml");
 }
 
@@ -319,7 +328,7 @@ errorpage(struct sys *sys, const char *fmt, ...)
 	t.keysz = TEMPL__MAX;
 	t.arg = &pg;
 	t.cb = errorpage_template;
-	http_open(&sys->req, KHTTP_200);
+	http_open_mime(&sys->req, KHTTP_200, KMIME_TEXT_HTML);
 	khttp_template(&sys->req, &t, DATADIR "/errorpage.xml");
 	free(buf);
 }
