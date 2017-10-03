@@ -62,13 +62,13 @@
 					<div class="control">
 						<div class="file has-name">
 							<label class="file-label">
-								<input required="required" class="file-input" type="file" name="file" id="file-name-input" />
+								<input required="required" class="file-input" type="file" name="file" id="file-name-input" multiple="multiple" />
 								<span class="file-cta">
 									<span class="file-icon">
 										<i class="fa fa-upload"></i>
 									</span>
 									<span class="file-label">
-										Choose a file&#8230;
+										Choose files&#8230;
 									</span>
 								</span>
 								<span class="file-name" id="file-name-text">

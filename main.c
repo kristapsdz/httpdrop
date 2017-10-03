@@ -380,6 +380,9 @@ check_canwrite(const struct stat *st)
 	return(isw);
 }
 
+/*
+ * Fill in templates to the directory listing page.
+ */
 static int
 get_dir_template(size_t index, void *arg)
 {
@@ -648,7 +651,7 @@ get_dir(struct sys *sys, int rdwr)
  * All we do use is the template feature to print out.
  */
 static void
-get_file(struct sys *sys)
+get_file(struct sys *sys, const struct stat *st)
 {
 	int		  nfd;
 
@@ -663,7 +666,8 @@ get_file(struct sys *sys)
 	/*
 	 * FIXME: use last-updated with the struct state of the
 	 * file and cross-check.
-	 * FIXME: file size in HTTP headers.
+	 * FIXME: range headers.
+	 * FIXME: KMETHOD_HEAD.
 	 */
 
 	http_open(&sys->req, KHTTP_200);
@@ -759,6 +763,40 @@ post_op_rmdir(struct sys *sys)
 	}
 }
 
+#if 0
+/*
+ * Make a directory "pn" relative to the current path "path" with file
+ * descriptor "nfd".
+ */
+static void
+post_op_getzip(struct sys *sys, int nfd)
+{
+	int	 	 fd, erp;
+	zip_error__t	 zer;
+	char	 	 sfn[24];
+	zip_t		*zip;
+
+	strlcpy(sfn, "/tmp/strlcpy.XXXXXXXXXX", sizeof(sfn));
+	if (-1 == (fd = mkstemp(sfn))) {
+		kutil_warn(&sys->req, sys->curuser, "mkstemp");
+		errorpage(sys, "System error.");
+		return;
+	}
+
+	/* Now we have the temporary filename. */
+
+	if (NULL == (zip = zip_open(sfn, ZIP_TRUNCATE, &erp))) {
+		zip_error_init_with_code(&zer, erp);
+		kutil_warnx(&sys->req, sys->curuser,
+			"%s: %s", sfn, zip_error_strerror(&zer));
+		zip_error_fini(&zer);
+		errorpage(sys, "System error.");
+		close(fd);
+		return;
+	}
+}
+#endif
+
 /*
  * Make a directory "pn" relative to the current path "path" with file
  * descriptor "nfd".
@@ -779,41 +817,57 @@ post_op_mkdir(struct sys *sys, int nfd, const char *pn)
 }
 
 /*
- * Write the file "fn" with file descriptor "nfd".
+ * Write all files named within the "KEY_FILE" designation.
  * Use file contents "data" of size "sz".
  * FIXME: have this perform after closing the connection, else it might
  * block the connection.
  */
 static void
-post_op_mkfile(struct sys *sys, int nfd, 
-	const char *fn, const char *data, size_t sz)
+post_op_mkfile(struct sys *sys, int nfd)
 {
-	int	 dfd, fl = O_WRONLY|O_TRUNC|O_CREAT;
-	ssize_t	 ssz;
+	int	 	 dfd, fl = O_WRONLY|O_TRUNC|O_CREAT;
+	ssize_t	 	 ssz;
+	struct kpair	*kp;
 
-	if (-1 == (dfd = openat(nfd, fn, fl, 0600))) {
-		kutil_warn(&sys->req, sys->curuser, 
-			"%s/%s: openat", sys->resource, fn);
-		errorpage(sys, "Cannot open \"%s\".", fn);
-		return;
+	for (kp = sys->req.fieldmap[KEY_FILE]; NULL != kp; kp = kp->next)
+		if ('\0' == kp->file[0] ||
+		    NULL != strchr(kp->file, '/') || 
+		    '.' == kp->file[0]) {
+			errorpage(sys, "Filename security violation.");
+			return;
+		}
+
+	for (kp = sys->req.fieldmap[KEY_FILE]; NULL != kp; kp = kp->next) {
+		if (-1 == (dfd = openat(nfd, kp->file, fl, 0600))) {
+			kutil_warn(&sys->req, sys->curuser, 
+				"%s/%s: openat", sys->resource, 
+				kp->file);
+			errorpage(sys, "System error.");
+			return;
+		}
+		if ((ssz = write(dfd, kp->val, kp->valsz)) < 0) {
+			kutil_warn(&sys->req, sys->curuser, 
+				"%s/%s: write", sys->resource, 
+				kp->file);
+			errorpage(sys, "System error.");
+			close(dfd);
+			return;
+		} else if ((size_t)ssz < kp->valsz) {
+			kutil_warnx(&sys->req, sys->curuser, 
+				"%s/%s: short write", 
+				sys->resource, kp->file);
+			errorpage(sys, "System error.");
+			close(dfd);
+			return;
+		} else {
+			kutil_info(&sys->req, sys->curuser, 
+				"%s/%s: wrote %zu bytes", 
+				sys->resource, kp->file, kp->valsz);
+		}
+		close(dfd);
 	}
 
-	if ((ssz = write(dfd, data, sz)) < 0) {
-		kutil_warn(&sys->req, sys->curuser, 
-			"%s/%s: write", sys->resource, fn);
-		errorpage(sys, "Cannot write to file \"%s\".", fn);
-	} else if ((size_t)ssz < sz) {
-		kutil_warnx(&sys->req, sys->curuser, 
-			"%s/%s: short write", sys->resource, fn);
-		errorpage(sys, "Cannot write to file \"%s\".", fn);
-	} else {
-		kutil_info(&sys->req, sys->curuser, 
-			"%s/%s: wrote %zu bytes", 
-			sys->resource, fn, sz);
-		send_301(sys);
-	}
-
-	close(dfd);
+	send_301(sys);
 }
 
 /*
@@ -850,9 +904,7 @@ post_op_file(struct sys *sys, enum action act)
 
 	/* What we're working with. */
 
-	target = ACTION_MKFILE == act ?
-		sys->req.fieldmap[KEY_FILE]->file :
-		ACTION_RMFILE == act ?
+	target = ACTION_RMFILE == act ?
 		sys->req.fieldmap[KEY_FILENAME]->parsed.s :
 		ACTION_MKDIR == act ?
 		sys->req.fieldmap[KEY_DIR]->parsed.s : NULL;
@@ -882,14 +934,12 @@ post_op_file(struct sys *sys, enum action act)
 	/* Now actually perform our operations. */
 
 	if (ACTION_MKFILE == act)
-		post_op_mkfile(sys, nfd, target, 
-			sys->req.fieldmap[KEY_FILE]->val, 
-			sys->req.fieldmap[KEY_FILE]->valsz);
+		post_op_mkfile(sys, nfd);
 	else if (ACTION_RMFILE == act)
 		post_op_rmfile(sys, nfd, target);
 	else if (ACTION_RMDIR == act)
 		post_op_rmdir(sys);
-	else
+	else if (ACTION_MKDIR == act)
 		post_op_mkdir(sys, nfd, target);
 out:
 	if (-1 != nfd)
@@ -1425,7 +1475,7 @@ main(void)
 		if (FTYPE_DIR == ftype)
 			get_dir(&sys, isw);
 		else
-			get_file(&sys);
+			get_file(&sys, &st);
 	} else {
 		if (FTYPE_DIR != ftype)
 			errorpage(&sys, "Post into a regular file.");
