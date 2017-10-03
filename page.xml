@@ -102,7 +102,7 @@
 				</div>
 			</form>
 			<form action="/cgi-bin/httpdrop@@URL@@" method="post">
-				<div class="is-nonempty field is-horizontal">
+				<div class="is-regnonempty field is-horizontal">
 					<input type="hidden" name="op" value="getzip" />
 					<div class="field">
 						<button class="button is-primary" type="submit">
@@ -117,7 +117,7 @@
 		</div>
 		<div class="container has-immutable" id="nofilemods">
 			<form action="/cgi-bin/httpdrop@@URL@@" method="post">
-				<div class="is-nonempty field is-horizontal">
+				<div class="is-regnonempty field is-horizontal">
 					<input type="hidden" name="op" value="getzip" />
 					<div class="field">
 						<button class="button is-primary" type="submit">

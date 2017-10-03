@@ -114,6 +114,7 @@ struct	loginpage {
 struct	dirpage {
 	struct fref	*frefs; /* file references */
 	size_t		 frefsz; /* all file count */
+	size_t		 filesz; /* non-.. file/dir count */
 	size_t		 rfilesz; /* regular file count */
 	int		 rdwr; /* is read-writable? */
 	int		 root; /* is document root? */
@@ -206,6 +207,9 @@ http_open(struct kreq *r, enum khttp code)
 	http_open_mime(r, code, r->mime);
 }
 
+/*
+ * Creates a zip file of the directory contents in "nfd".
+ */
 static char *
 zip_create(struct sys *sys, int nfd)
 {
@@ -516,8 +520,10 @@ get_dir_template(size_t index, void *arg)
 			" mutable" : " immutable", sizeof(classes));
 		strlcat(classes, pg->root ?
 			" root" : " nonroot", sizeof(classes));
-		strlcat(classes, pg->rfilesz > 0 ?
+		strlcat(classes, pg->filesz > 0 ?
 			" nonempty" : " empty", sizeof(classes));
+		strlcat(classes, pg->rfilesz > 0 ?
+			" regnonempty" : " regempty", sizeof(classes));
 		strlcat(classes, pg->sys->loggedin ?
 			" loggedin" : "", sizeof(classes));
 		khtml_puts(&req, classes);
@@ -655,7 +661,7 @@ get_dir(struct sys *sys, int rdwr)
 	DIR		*dir;
 	struct dirent	*dp;
 	int		 fl = O_RDONLY | O_DIRECTORY;
-	size_t		 filesz = 0, rfilesz = 0, i;
+	size_t		 filesz = 0, rfilesz = 0, rffilesz = 0, i;
 	struct ktemplate t;
 	struct fref	*files = NULL;
 	struct dirpage	 dirpage;
@@ -724,6 +730,8 @@ get_dir(struct sys *sys, int rdwr)
 		filesz++;
 		if (strcmp(dp->d_name, ".."))
 			rfilesz++;
+		if (DT_REG == dp->d_type)
+			rffilesz++;
 	}
 
 	closedir(dir);
@@ -735,7 +743,8 @@ get_dir(struct sys *sys, int rdwr)
 
 	dirpage.frefs = files;
 	dirpage.frefsz = filesz;
-	dirpage.rfilesz = rfilesz;
+	dirpage.filesz = rfilesz;
+	dirpage.rfilesz = rffilesz;
 	dirpage.rdwr = rdwr;
 	dirpage.fpath = fpath;
 	dirpage.root = '\0' == sys->resource[0];

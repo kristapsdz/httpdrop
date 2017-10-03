@@ -19,6 +19,8 @@
 .mutable .has-immutable		{ display: none; }
 .empty .is-nonempty		{ display: none; }
 .nonempty .is-empty		{ display: none; }
+.regempty .is-regnonempty	{ display: none; }
+.regnonempty .is-regempty	{ display: none; }
 .root .is-nonroot		{ display: none; }
 .nonroot .is-root		{ display: none; }
 .has-login			{ display: none; }
