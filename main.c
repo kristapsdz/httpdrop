@@ -17,6 +17,7 @@
 
 #include <kcgi.h>
 #include <kcgihtml.h>
+#include <zip.h>
 
 #ifndef	CACHEDIR
 # define CACHEDIR "/cache/httpdrop"
@@ -35,6 +36,7 @@ enum	page {
 
 enum	action {
 	ACTION_GET,
+	ACTION_GETZIP,
 	ACTION_LOGIN,
 	ACTION_LOGOUT,
 	ACTION_MKDIR,
@@ -194,11 +196,120 @@ http_open_mime(struct kreq *r, enum khttp code, enum kmime mime)
 	khttp_body(r);
 }
 
+/*
+ * See http_open_mime() with the requested document's MIME.
+ */
 static void
 http_open(struct kreq *r, enum khttp code)
 {
 
 	http_open_mime(r, code, r->mime);
+}
+
+static char *
+zip_create(struct sys *sys, int nfd)
+{
+	int	 	 nnfd, fd, erp;
+	zip_error_t	 zer;
+	char	 	 sfn[25];
+	char		*ret = NULL;
+	zip_t		*zip = NULL;
+	DIR		*dir = NULL;
+	FILE		*f;
+	zip_source_t	*src;
+	struct dirent	*dp;
+
+	strlcpy(sfn, "/tmp/httpdrop.XXXXXXXXXX", sizeof(sfn));
+	if (NULL == mktemp(sfn)) {
+		kutil_warn(&sys->req, sys->curuser, "mktemp");
+		return(NULL);
+	} 
+
+	kutil_info(&sys->req, sys->curuser, 
+		"%s: filling: %s/%s", sfn,
+		sys->filedir, sys->resource);
+
+	zip = zip_open(sfn, ZIP_CREATE | ZIP_EXCL, &erp);
+
+	if (NULL == zip) {
+		zip_error_init_with_code(&zer, erp);
+		kutil_warnx(&sys->req, sys->curuser,
+			"%s: %s", sfn, zip_error_strerror(&zer));
+		zip_error_fini(&zer);
+		goto out;
+	}
+
+	/* 
+	 * Iterate through regular non-dot files in nfd.
+	 * We make a copy of nfd because fdopendir() will swallow the
+	 * descriptor and close it on closedir().
+	 */
+
+	if (-1 == (nnfd = dup(nfd))) {
+		kutil_warn(&sys->req, sys->curuser, "dup");
+		goto out;
+	} else if (NULL == (dir = fdopendir(nnfd))) {
+		kutil_warn(&sys->req, sys->curuser, "%s/%s: "
+			"fdopendir", sys->filedir, sys->resource);
+		close(nnfd);
+		goto out;
+	}
+
+	while (NULL != (dp = readdir(dir))) {
+		if (DT_REG != dp->d_type || '.' == dp->d_name[0])
+			continue;
+
+		kutil_info(&sys->req, sys->curuser, 
+			"%s: adding: %s/%s/%s", sfn,
+			sys->filedir, sys->resource, dp->d_name);
+
+		fd = openat(nfd, dp->d_name, O_RDONLY, 0);
+		if (-1 == fd) {
+			kutil_warn(&sys->req, sys->curuser,
+				"%s/%s/%s: openat", sys->filedir, 
+				sys->resource, dp->d_name);
+			goto out;
+		} else if (NULL == (f = fdopen(fd, "r"))) {
+			kutil_warn(&sys->req, sys->curuser,
+				"%s/%s/%s: fdopen", sys->filedir,
+				sys->resource, dp->d_name);
+			close(fd);
+			goto out;
+		}
+
+		/* Open ZIP source (transfers stream ownership). */
+
+		src = zip_source_filep_create(f, 0, -1, &zer);
+		if (NULL == src) {
+			kutil_warnx(&sys->req, sys->curuser, "%s: "
+				"%s", sfn, zip_error_strerror(&zer));
+			fclose(f);
+			goto out;
+		} else if (zip_file_add(zip, dp->d_name, src, 0) < 0) {
+			kutil_warnx(&sys->req, sys->curuser, 
+				"%s: %s", sfn, zip_strerror(zip));
+			zip_source_free(src);
+			goto out;
+		}
+	}
+
+	/* Close directory and ZIP archive file. */
+
+	closedir(dir);
+	dir = NULL;
+	if ((erp = zip_close(zip)) < 0) {
+		kutil_warnx(&sys->req, sys->curuser, 
+			"%s: %s", sfn, zip_strerror(zip));
+		goto out;
+	}
+	zip = NULL;
+	ret = kstrdup(sfn);
+out:
+	if (NULL != dir)
+		closedir(dir);
+	if (NULL != zip)
+		zip_discard(zip);
+	return(ret);
 }
 
 /*
@@ -538,7 +649,7 @@ get_dir_template(size_t index, void *arg)
 static void
 get_dir(struct sys *sys, int rdwr)
 {
-	int		 nfd;
+	int		 nfd, nnfd;
 	struct stat	 st;
 	char		*fpath;
 	DIR		*dir;
@@ -565,34 +676,41 @@ get_dir(struct sys *sys, int rdwr)
 
 	/* 
 	 * Get the DIR pointer from the directory request.
+	 * We clone nfd because fdopendir() will take ownership.
 	 * Then read all acceptable entries into our "files" array.
 	 */
 
-	if (NULL == (dir = fdopendir(nfd))) {
+	if (-1 == (nnfd = dup(nfd))) {
+		kutil_warn(&sys->req, sys->curuser, "dup");
+		errorpage(sys, "System error.");
+		return;
+	} else if (NULL == (dir = fdopendir(nnfd))) {
 		kutil_warn(&sys->req, sys->curuser, 
 			"%s: fdopendir", sys->resource);
-		errorpage(sys, "Cannot scan \"%s\".", sys->resource);
+		errorpage(sys, "System error.");
+		close(nnfd);
 		return;
 	}
 
 	while (NULL != (dp = readdir(dir))) {
 		/* 
 		 * Disallow non-regular or directory, the current
-		 * directory, and previous when in the root.
-		 * Also don't let fstat errors flow.
+		 * directory, any dot-files, and previous when in the
+		 * root.
 		 */
 
 		if ((DT_DIR != dp->d_type && 
 		     DT_REG != dp->d_type) ||
-		    0 == strcmp(dp->d_name, "."))
-			continue;
-		if (0 == strcmp(dp->d_name, "..") &&
-		    '\0' == sys->resource[0])
-			continue;
-		if (-1 == fstatat(nfd, dp->d_name, &st, 0))
+		    (DT_DIR == dp->d_type && 
+		     0 == strcmp(dp->d_name, ".")) ||
+		    (DT_REG == dp->d_type && 
+		     '.' == dp->d_name[0]) ||
+		    (0 == strcmp(dp->d_name, "..") &&
+		    '\0' == sys->resource[0]))
 			continue;
 
-		/* Get file information... */
+		if (-1 == fstatat(nfd, dp->d_name, &st, 0))
+			continue;
 
 		kasprintf(&fpath, "%s/%s%s%s", sys->req.pname, 
 			sys->resource, 
@@ -654,6 +772,11 @@ static void
 get_file(struct sys *sys, const struct stat *st)
 {
 	int		  nfd;
+
+	if (S_ISREG(st->st_mode)) {
+		errorpage(sys, "Cannot open \"%s\".", sys->resource);
+		return;
+	}
 
 	nfd = openat(sys->filefd, sys->resource, O_RDONLY, 0);
 	if (-1 == nfd) {
@@ -763,39 +886,36 @@ post_op_rmdir(struct sys *sys)
 	}
 }
 
-#if 0
-/*
- * Make a directory "pn" relative to the current path "path" with file
- * descriptor "nfd".
- */
 static void
 post_op_getzip(struct sys *sys, int nfd)
 {
-	int	 	 fd, erp;
-	zip_error__t	 zer;
-	char	 	 sfn[24];
-	zip_t		*zip;
+	char		*fname, *url;
+	char		 date[30];
+	const char	*cp;
 
-	strlcpy(sfn, "/tmp/strlcpy.XXXXXXXXXX", sizeof(sfn));
-	if (-1 == (fd = mkstemp(sfn))) {
-		kutil_warn(&sys->req, sys->curuser, "mkstemp");
+	kutil_epoch2utcstr(time(NULL), date, sizeof(date));
+
+	cp = strrchr(sys->resource, '/');
+	if (NULL == cp)
+		cp = sys->resource;
+	else
+		cp++;
+
+	kasprintf(&url, "%s.%s.zip", cp, date);
+
+	if (NULL == (fname = zip_create(sys, nfd))) {
 		errorpage(sys, "System error.");
 		return;
 	}
 
-	/* Now we have the temporary filename. */
-
-	if (NULL == (zip = zip_open(sfn, ZIP_TRUNCATE, &erp))) {
-		zip_error_init_with_code(&zer, erp);
-		kutil_warnx(&sys->req, sys->curuser,
-			"%s: %s", sfn, zip_error_strerror(&zer));
-		zip_error_fini(&zer);
-		errorpage(sys, "System error.");
-		close(fd);
-		return;
-	}
+	khttp_head(&sys->req, kresps[KRESP_CONTENT_DISPOSITION], 
+		"attachment; filename=\"%s\"", url);
+	http_open_mime(&sys->req, KHTTP_200, KMIME_APP_OCTET_STREAM);
+	khttp_template(&sys->req, NULL, fname);
+	remove(fname);
+	free(fname);
+	free(url);
 }
-#endif
 
 /*
  * Make a directory "pn" relative to the current path "path" with file
@@ -941,6 +1061,8 @@ post_op_file(struct sys *sys, enum action act)
 		post_op_rmdir(sys);
 	else if (ACTION_MKDIR == act)
 		post_op_mkdir(sys, nfd, target);
+	else if (ACTION_GETZIP == act)
+		post_op_getzip(sys, nfd);
 out:
 	if (-1 != nfd)
 		close(nfd);
@@ -1302,7 +1424,7 @@ main(void)
 		return(EXIT_FAILURE);
 	}
 
-	if (-1 == pledge("rpath cpath wpath stdio", NULL)) {
+	if (-1 == pledge("fattr rpath cpath wpath stdio", NULL)) {
 		kutil_warn(&sys.req, NULL, "pledge");
 		goto out;
 	}
@@ -1381,6 +1503,8 @@ main(void)
 			act = ACTION_LOGIN;
 		else if (0 == strcmp(kp->parsed.s, "logout"))
 			act = ACTION_LOGOUT;
+		else if (0 == strcmp(kp->parsed.s, "getzip"))
+			act = ACTION_GETZIP;
 	} else
 		act = ACTION_GET;
 
@@ -1479,7 +1603,7 @@ main(void)
 	} else {
 		if (FTYPE_DIR != ftype)
 			errorpage(&sys, "Post into a regular file.");
-		else if ( ! isw)
+		else if ( ! isw && ACTION_GETZIP != act)
 			errorpage(&sys, "Post into readonly directory.");
 		else
 			post_op_file(&sys, act);

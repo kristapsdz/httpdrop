@@ -50,7 +50,7 @@
 					<div class="field-body">
 						<div class="field is-grouped">
 							<div class="control">
-								<button class="button is-primary" type="submit">Delete</button>
+								<button class="button is-small is-primary" type="submit">Delete</button>
 							</div>
 						</div>
 					</div>
@@ -64,9 +64,6 @@
 							<label class="file-label">
 								<input required="required" class="file-input" type="file" name="file" id="file-name-input" multiple="multiple" />
 								<span class="file-cta">
-									<span class="file-icon">
-										<i class="fa fa-upload"></i>
-									</span>
 									<span class="file-label">
 										Choose files&#8230;
 									</span>
@@ -79,7 +76,12 @@
 						</div>
 					</div>
 					<div class="control">
-						<button id="file-uploader-button" class="button is-primary" type="submit">Upload</button>
+						<button id="file-uploader-button" class="button is-primary" type="submit">
+							<span class="icon">
+								<i class="fa fa-upload"></i>
+							</span>
+							<span>Upload</span>
+						</button>
 					</div>
 				</div>
 			</form>
@@ -90,12 +92,43 @@
 						<input required="required" type="text" placeholder="Directory name" name="dir" class="input is-fullwidth" />
 					</div>
 					<div class="control">
-						<button class="button is-primary" type="submit">Create</button>
+						<button class="button is-primary" type="submit">
+							<span class="icon">
+								<i class="fa fa-folder-open"></i>
+							</span>
+							<span>Create</span>
+						</button>
+					</div>
+				</div>
+			</form>
+			<form action="/cgi-bin/httpdrop@@URL@@" method="post">
+				<div class="is-nonempty field is-horizontal">
+					<input type="hidden" name="op" value="getzip" />
+					<div class="field">
+						<button class="button is-primary" type="submit">
+							<span class="icon">
+								<i class="fa fa-download"></i>
+							</span>
+							<span>Download ZIP</span>
+						</button>
 					</div>
 				</div>
 			</form>
 		</div>
 		<div class="container has-immutable" id="nofilemods">
+			<form action="/cgi-bin/httpdrop@@URL@@" method="post">
+				<div class="is-nonempty field is-horizontal">
+					<input type="hidden" name="op" value="getzip" />
+					<div class="field">
+						<button class="button is-primary" type="submit">
+							<span class="icon">
+								<i class="fa fa-download"></i>
+							</span>
+							<span>Download ZIP</span>
+						</button>
+					</div>
+				</div>
+			</form>
 			<div class="notification is-warning">
 				<p>
 					Directory and file modifications are disabled: the resource is read-only.

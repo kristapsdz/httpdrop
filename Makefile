@@ -1,6 +1,7 @@
 LDFLAGS	+= -L/usr/local/lib
 CFLAGS 	+= -I/usr/local/include
 CFLAGS	+= -W -Wall -Wextra -g
+CFLAGS	+= -I/usr/local/lib/libzip/include
 
 HTURI	 = /
 WWWDIR	 = /var/www
@@ -18,7 +19,7 @@ CFLAGS	+= -DCACHEDIR=\"$(CACHEDIR)\"
 CFLAGS	+= $(SECURE)
 
 httpdrop: main.o
-	$(CC) -static -o $@ main.o $(LDFLAGS) -lkcgi -lkcgihtml -lz
+	$(CC) -static -o $@ main.o $(LDFLAGS) -lkcgi -lkcgihtml -lzip -lz
 
 installwww: httpdrop
 	mkdir -p $(WWWDIR)/htdocs

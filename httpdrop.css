@@ -32,6 +32,8 @@
 #loginpage.error-syserr #errormsg-syserr
 				{ display: block; }
 #page				{ padding-bottom: 1em; }
+.button .icon .fa		{ font-size: 14px; }
+.notification			{ margin: 1.12em auto; }
 
 @media (min-width: 750px) {
  #files				{ padding: 0; }
@@ -39,5 +41,5 @@
  #files ul li > :first-child	{ flex: 1; }
  #files ul li > *		{ padding: 0 4pt; }
  #files ul li + li		{ margin-top: 4pt; }
- #nofilemods, #filemods		{ padding: 0; }
+ #nofilemods, #filemods		{ padding: 4pt; }
 }
