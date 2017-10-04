@@ -435,11 +435,12 @@ errorpage(struct sys *sys, const char *fmt, ...)
 	va_list		 ap;
 	struct ktemplate t;
 	int		 fd;
+	const char	*fn = DATADIR "/errorpage.xml";
 
 	/* Pre-open file descriptor so we can pledge. */
 
-	fd = open(DATADIR "/errorpage.xml", O_RDONLY, 0);
-
+	if (-1 == (fd = open(fn, O_RDONLY, 0)))
+		kutil_warn(&sys->req, sys->curuser, "%s", fn);
 	if (-1 == pledge("stdio", NULL))
 		kutil_err(&sys->req, sys->curuser, "pledge");
 
@@ -463,8 +464,7 @@ errorpage(struct sys *sys, const char *fmt, ...)
 		khttp_puts(&sys->req, "Error: ");
 		khttp_puts(&sys->req, buf);
 	} else {
-		khttp_template_fd(&sys->req, &t, 
-			fd, DATADIR "/errorpage.xml");
+		khttp_template_fd(&sys->req, &t, fd, fn);
 		close(fd);
 	}
 
