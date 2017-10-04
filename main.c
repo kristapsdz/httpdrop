@@ -28,6 +28,9 @@
 #ifndef	AUTHDIR
 # define AUTHDIR "cookies"
 #endif
+#ifndef	TMPDIR
+# define TMPDIR "tmp"
+#endif
 
 enum	page {
 	PAGE_INDEX,
@@ -140,9 +143,11 @@ struct	sys {
 	const char	*cachedir; /* root of system files */
 	const char	*filedir; /* root of files */
 	const char	*authdir; /* root of cookies */
+	const char	*tmpdir; /* root of tmpfiles */
 	int		 cachefd; /* directory handle */
 	int		 filefd; /* directory handle */
 	int		 authfd; /* directory handle */
+	int		 tmpfd; /* directory handle */
 	const char	*resource; /* requested resource */
 	struct kreq	 req; /* request */
 	int		 loggedin; /* logged in? */
@@ -429,10 +434,18 @@ errorpage(struct sys *sys, const char *fmt, ...)
 	char		*buf;
 	va_list		 ap;
 	struct ktemplate t;
+	int		 fd;
+
+	/* Pre-open file descriptor so we can pledge. */
+
+	fd = open(DATADIR "/errorpage.xml", O_RDONLY, 0);
+
+	if (-1 == pledge("stdio", NULL))
+		kutil_err(&sys->req, sys->curuser, "pledge");
 
 	va_start(ap, fmt);
 	if (-1 == vasprintf(&buf, fmt, ap))
-		exit(EXIT_FAILURE);
+		kutil_err(&sys->req, sys->curuser, "vasprintf");
 	va_end(ap);
 
 	pg.msg = buf;
@@ -443,8 +456,18 @@ errorpage(struct sys *sys, const char *fmt, ...)
 	t.keysz = TEMPL__MAX;
 	t.arg = &pg;
 	t.cb = errorpage_template;
+
 	http_open_mime(&sys->req, KHTTP_200, KMIME_TEXT_HTML);
-	khttp_template(&sys->req, &t, DATADIR "/errorpage.xml");
+
+	if (-1 == fd) {
+		khttp_puts(&sys->req, "Error: ");
+		khttp_puts(&sys->req, buf);
+	} else {
+		khttp_template_fd(&sys->req, &t, 
+			fd, DATADIR "/errorpage.xml");
+		close(fd);
+	}
+
 	free(buf);
 }
 
@@ -1414,6 +1437,7 @@ main(void)
 	sys.cachedir = CACHEDIR;
 	sys.filedir = FILEDIR;
 	sys.authdir = AUTHDIR;
+	sys.tmpdir = TMPDIR;
 
 	/* Log into a separate logfile (not system log). */
 
@@ -1433,10 +1457,8 @@ main(void)
 		return(EXIT_FAILURE);
 	}
 
-	if (-1 == pledge("fattr rpath cpath wpath stdio", NULL)) {
-		kutil_warn(&sys.req, NULL, "pledge");
-		goto out;
-	}
+	if (-1 == pledge("fattr rpath cpath wpath stdio", NULL))
+		kutil_err(&sys.req, NULL, "pledge");
 
 	/*
 	 * Front line of defence: make sure we're a proper method and
@@ -1491,6 +1513,12 @@ main(void)
 	}
 	sys.authfd = fd;
 
+	if (-1 == (fd = open_dir(&sys, sys.tmpdir))) {
+		errorpage(&sys, "Cannot open tmpfile root.");
+		goto out;
+	}
+	sys.tmpfd = fd;
+
 	/* 
 	 * Now figure out what we're supposed to do here.
 	 * This will sanitise our request action.
@@ -1525,11 +1553,8 @@ main(void)
 	/* Getting (readonly): drop privileges. */
 
 	if (ACTION_GET == act)
-		if (-1 == pledge("rpath stdio", NULL)) {
-			kutil_warn(&sys.req, NULL, "pledge");
-			errorpage(&sys, "System error.");
-			goto out;
-		}
+		if (-1 == pledge("rpath stdio", NULL))
+			kutil_err(&sys.req, NULL, "pledge");
 
 	/* Logging in: jump straight to login page. */
 
@@ -1622,7 +1647,7 @@ out:
 	/* Drop privileges and free memory. */
 
 	if (-1 == pledge("stdio", NULL))
-		kutil_warn(&sys.req, NULL, "pledge");
+		kutil_err(&sys.req, NULL, "pledge");
 
 	if (NULL != uq) {
 		while (NULL != (u = TAILQ_FIRST(uq))) {
