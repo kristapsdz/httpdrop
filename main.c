@@ -234,10 +234,6 @@ zip_create(struct sys *sys, int nfd)
 		return(NULL);
 	} 
 
-	kutil_info(&sys->req, sys->curuser, 
-		"%s: filling: %s/%s", sfn,
-		sys->filedir, sys->resource);
-
 	zip = zip_open(sfn, ZIP_CREATE | ZIP_EXCL, &erp);
 
 	if (NULL == zip) {
@@ -267,10 +263,6 @@ zip_create(struct sys *sys, int nfd)
 	while (NULL != (dp = readdir(dir))) {
 		if (DT_REG != dp->d_type || '.' == dp->d_name[0])
 			continue;
-
-		kutil_info(&sys->req, sys->curuser, 
-			"%s: adding: %s/%s/%s", sfn,
-			sys->filedir, sys->resource, dp->d_name);
 
 		fd = openat(nfd, dp->d_name, O_RDONLY, 0);
 		if (-1 == fd) {
@@ -443,6 +435,8 @@ errorpage(struct sys *sys, const char *fmt, ...)
 		kutil_warn(&sys->req, sys->curuser, "%s", fn);
 	if (-1 == pledge("stdio", NULL))
 		kutil_err(&sys->req, sys->curuser, "pledge");
+
+	/* Now we only use pre-opened resources. */
 
 	va_start(ap, fmt);
 	if (-1 == vasprintf(&buf, fmt, ap))
@@ -678,7 +672,7 @@ get_dir_template(size_t index, void *arg)
 static void
 get_dir(struct sys *sys, int rdwr)
 {
-	int		 nfd, nnfd;
+	int		 nfd, nnfd, fd;
 	struct stat	 st;
 	char		*fpath;
 	DIR		*dir;
@@ -688,6 +682,7 @@ get_dir(struct sys *sys, int rdwr)
 	struct ktemplate t;
 	struct fref	*files = NULL;
 	struct dirpage	 dirpage;
+	const char	*fn = DATADIR "/page.xml";
 
 	if ('\0' != sys->resource[0]) {
 		nfd = openat(sys->filefd, sys->resource, fl, 0);
@@ -759,6 +754,13 @@ get_dir(struct sys *sys, int rdwr)
 
 	closedir(dir);
 
+	/* Open our template page and sandbox ourselves. */
+
+	if (-1 == (fd = open(fn, O_RDONLY, 0)))
+		kutil_warn(&sys->req, sys->curuser, "%s", fn);
+	if (-1 == pledge("stdio", NULL))
+		kutil_err(&sys->req, sys->curuser, "pledge");
+
 	qsort(files, filesz, sizeof(struct fref), fref_cmp);
 
 	kasprintf(&fpath, "%s/%s%s", sys->req.pname, 
@@ -786,7 +788,11 @@ get_dir(struct sys *sys, int rdwr)
 	t.cb = get_dir_template;
 
 	http_open(&sys->req, KHTTP_200);
-	khttp_template(&sys->req, &t, DATADIR "/page.xml");
+
+	if (-1 != fd) {
+		khttp_template_fd(&sys->req, &t, fd, fn);
+		close(fd);
+	}
 
 	free(fpath);
 	for (i = 0; i < filesz; i++) {
@@ -805,7 +811,7 @@ get_file(struct sys *sys, const struct stat *st)
 {
 	int		  nfd;
 
-	if (S_ISREG(st->st_mode)) {
+	if ( ! S_ISREG(st->st_mode)) {
 		errorpage(sys, "Cannot open \"%s\".", sys->resource);
 		return;
 	}
