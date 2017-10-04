@@ -362,6 +362,15 @@ loginpage(struct sys *sys, enum loginerr error)
 {
 	struct ktemplate t;
 	struct loginpage loginpage;
+	int		 fd;
+	const char	*fn = DATADIR "/loginpage.xml";
+
+	/* Load our template and enact sandbox. */
+
+	if (-1 == (fd = open(fn, O_RDONLY, 0))) 
+		kutil_warn(&sys->req, sys->curuser, "%s", fn);
+	if (-1 == pledge("stdio", NULL))
+		kutil_err(&sys->req, sys->curuser, "plege");
 
 	loginpage.sys = sys;
 	loginpage.error = error;
@@ -371,8 +380,12 @@ loginpage(struct sys *sys, enum loginerr error)
 	t.keysz = TEMPL__MAX;
 	t.arg = &loginpage;
 	t.cb = loginpage_template;
+
 	http_open_mime(&sys->req, KHTTP_200, KMIME_TEXT_HTML);
-	khttp_template(&sys->req, &t, DATADIR "/loginpage.xml");
+	if (-1 != fd) {
+		khttp_template_fd(&sys->req, &t, fd, fn);
+		close(fd);
+	}
 }
 
 /*
@@ -822,7 +835,9 @@ get_file(struct sys *sys, const struct stat *st)
 			"%s: openat", sys->resource);
 		errorpage(sys, "Cannot open \"%s\".", sys->resource);
 		return;
-	}
+	} else if (-1 == pledge("stdio", NULL))
+		kutil_err(&sys->req, sys->curuser, 
+			"%s", sys->resource);
 
 	/*
 	 * FIXME: use last-updated with the struct state of the
@@ -948,7 +963,7 @@ post_op_getzip(struct sys *sys, int nfd)
 
 	khttp_head(&sys->req, kresps[KRESP_CONTENT_DISPOSITION], 
 		"attachment; filename=\"%s\"", url);
-	http_open_mime(&sys->req, KHTTP_200, KMIME_APP_OCTET_STREAM);
+	http_open_mime(&sys->req, KHTTP_200, KMIME_APP_ZIP);
 	khttp_template(&sys->req, NULL, fname);
 	remove(fname);
 	free(fname);
