@@ -220,26 +220,26 @@ zip_create(struct sys *sys, int nfd)
 {
 	int	 	 nnfd, fd, erp;
 	zip_error_t	 zer;
-	char	 	 sfn[25];
-	char		*ret = NULL;
+	char		*ret = NULL, *path = NULL;
 	zip_t		*zip = NULL;
 	DIR		*dir = NULL;
 	FILE		*f;
 	zip_source_t	*src;
 	struct dirent	*dp;
 
-	strlcpy(sfn, "/tmp/httpdrop.XXXXXXXXXX", sizeof(sfn));
-	if (NULL == mktemp(sfn)) {
+	kasprintf(&path, "%s/httpdrop.XXXXXXXXXX", sys->tmpdir);
+
+	if (NULL == mktemp(path)) {
 		kutil_warn(&sys->req, sys->curuser, "mktemp");
 		return(NULL);
 	} 
 
-	zip = zip_open(sfn, ZIP_CREATE | ZIP_EXCL, &erp);
+	zip = zip_open(path, ZIP_CREATE | ZIP_EXCL, &erp);
 
 	if (NULL == zip) {
 		zip_error_init_with_code(&zer, erp);
 		kutil_warnx(&sys->req, sys->curuser,
-			"%s: %s", sfn, zip_error_strerror(&zer));
+			"%s: %s", path, zip_error_strerror(&zer));
 		zip_error_fini(&zer);
 		goto out;
 	}
@@ -283,12 +283,12 @@ zip_create(struct sys *sys, int nfd)
 		src = zip_source_filep_create(f, 0, -1, &zer);
 		if (NULL == src) {
 			kutil_warnx(&sys->req, sys->curuser, "%s: "
-				"%s", sfn, zip_error_strerror(&zer));
+				"%s", path, zip_error_strerror(&zer));
 			fclose(f);
 			goto out;
 		} else if (zip_file_add(zip, dp->d_name, src, 0) < 0) {
 			kutil_warnx(&sys->req, sys->curuser, 
-				"%s: %s", sfn, zip_strerror(zip));
+				"%s: %s", path, zip_strerror(zip));
 			zip_source_free(src);
 			goto out;
 		}
@@ -300,16 +300,19 @@ zip_create(struct sys *sys, int nfd)
 	dir = NULL;
 	if ((erp = zip_close(zip)) < 0) {
 		kutil_warnx(&sys->req, sys->curuser, 
-			"%s: %s", sfn, zip_strerror(zip));
+			"%s: %s", path, zip_strerror(zip));
 		goto out;
 	}
 	zip = NULL;
-	ret = kstrdup(sfn);
+
+	ret = path;
+	path = NULL;
 out:
 	if (NULL != dir)
 		closedir(dir);
 	if (NULL != zip)
 		zip_discard(zip);
+	free(path);
 	return(ret);
 }
 
@@ -962,7 +965,7 @@ post_op_getzip(struct sys *sys, int nfd)
 	}
 
 	khttp_head(&sys->req, kresps[KRESP_CONTENT_DISPOSITION], 
-		"attachment; filename=\"%s\"", url);
+		"attachment; filename=%s", url);
 	http_open_mime(&sys->req, KHTTP_200, KMIME_APP_ZIP);
 	khttp_template(&sys->req, NULL, fname);
 	remove(fname);
@@ -1687,6 +1690,8 @@ out:
 		close(sys.filefd);
 	if (-1 != sys.authfd)
 		close(sys.authfd);
+	if (-1 != sys.tmpfd)
+		close(sys.tmpfd);
 	khttp_free(&sys.req);
 	return(EXIT_SUCCESS);
 }
