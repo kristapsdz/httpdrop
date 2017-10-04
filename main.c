@@ -227,7 +227,8 @@ zip_create(struct sys *sys, int nfd)
 	zip_source_t	*src;
 	struct dirent	*dp;
 
-	kasprintf(&path, "%s/httpdrop.XXXXXXXXXX", sys->tmpdir);
+	kasprintf(&path, "%s/%s/httpdrop.XXXXXXXXXX", 
+		sys->cachedir, sys->tmpdir);
 
 	if (NULL == mktemp(path)) {
 		kutil_warn(&sys->req, sys->curuser, "mktemp");
@@ -965,7 +966,7 @@ post_op_getzip(struct sys *sys, int nfd)
 	}
 
 	khttp_head(&sys->req, kresps[KRESP_CONTENT_DISPOSITION], 
-		"attachment; filename=%s", url);
+		"attachment; filename=\"%s\"", url);
 	http_open_mime(&sys->req, KHTTP_200, KMIME_APP_ZIP);
 	khttp_template(&sys->req, NULL, fname);
 	remove(fname);
