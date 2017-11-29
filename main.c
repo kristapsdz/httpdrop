@@ -19,6 +19,8 @@
 #include <kcgihtml.h>
 #include <zip.h>
 
+#include "extern.h"
+
 #ifndef	CACHEDIR
 # define CACHEDIR "/cache/httpdrop"
 #endif
@@ -93,17 +95,6 @@ struct	fref {
 };
 
 /*
- * A user used for logging in and session cookies.
- */
-struct	user {
-	char		*name; /* username */
-	char		*hash; /* bcrypt(3) password */
-	TAILQ_ENTRY(user) entries;
-};
-
-TAILQ_HEAD(userq, user);
-
-/*
  * Used for login page template.
  */
 struct	loginpage {
@@ -131,27 +122,6 @@ struct	dirpage {
 struct	errorpage {
 	const char	*msg; /* error message */
 	struct sys	*sys;
-};
-
-/*
- * This is the system object.
- * It's filled in for each request.
- * The descriptors are initialised to -1, but in the non-degenerative
- * case are valid.
- */
-struct	sys {
-	const char	*cachedir; /* root of system files */
-	const char	*filedir; /* root of files */
-	const char	*authdir; /* root of cookies */
-	const char	*tmpdir; /* root of tmpfiles */
-	int		 cachefd; /* directory handle */
-	int		 filefd; /* directory handle */
-	int		 authfd; /* directory handle */
-	int		 tmpfd; /* directory handle */
-	const char	*resource; /* requested resource */
-	struct kreq	 req; /* request */
-	int		 loggedin; /* logged in? */
-	const char	*curuser; /* if logged in (or NULL) */
 };
 
 static const char *const pages[PAGE__MAX] = {
@@ -1126,7 +1096,7 @@ out:
 }
 
 static void
-post_op_logout(struct sys *sys)
+post_op_logout(struct sys *sys, const struct backend *back, void *auth_arg)
 {
 	const char	*secure;
 	char		 buf[32];
@@ -1140,9 +1110,7 @@ post_op_logout(struct sys *sys)
 	assert(NULL != sys->curuser);
 	assert(sys->loggedin);
 
-	if (-1 == unlinkat(sys->authfd, sys->curuser, 0))
-		kutil_warn(&sys->req, sys->curuser, 
-			"%s/%s", sys->authdir, sys->curuser);
+	(*back->auth_logout)(sys, auth_arg);
 
 	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
 		"%s=; path=/;%s HttpOnly; expires=%s", 
@@ -1155,12 +1123,10 @@ post_op_logout(struct sys *sys)
 }
 
 static void
-post_op_login(struct sys *sys, const struct userq *uq)
+post_op_login(struct sys *sys, const struct backend *back, void *auth_arg)
 {
-	int	 	 fd;
 	const char	*name, *pass, *secure;
 	char		 buf[1024];
-	const struct user *u;
 	int64_t		 cookie;
 
 	if (NULL == sys->req.fieldmap[KEY_USER] ||
@@ -1169,52 +1135,19 @@ post_op_login(struct sys *sys, const struct userq *uq)
 		return;
 	}
 
-	/*
-	 * Look up the username, make sure it exists, then check against
-	 * the given hash using the crypt_checkpass function, which does
-	 * the heavy lefting for us.
-	 * Don't report errors: baddies could spam the log.
-	 */
+	warnx("2");
 
 	name = sys->req.fieldmap[KEY_USER]->parsed.s;
 	pass = sys->req.fieldmap[KEY_PASSWD]->parsed.s;
+	cookie = (*back->auth_login)(sys, auth_arg, name, pass);
 
-	TAILQ_FOREACH(u, uq, entries)
-		if (0 == strcasecmp(u->name, name))
-			break;
-
-	if (NULL == u) {
+	if (0 == cookie) {
 		loginpage(sys, LOGINERR_BADCREDS);
 		return;
-	} else if (crypt_checkpass(pass, u->hash)) {
-		loginpage(sys, LOGINERR_BADCREDS);
-		return;
-	}
-
-	/*
-	 * Create a random cookie (session token) and overwrite whatever
-	 * is currently in our cookie file, if at all.
-	 */
-
-	cookie = arc4random();
-	snprintf(buf, sizeof(buf), "%" PRId64 "\n", cookie);
-
-	fd = openat(sys->authfd, name, 
-		O_CREAT | O_RDWR | O_TRUNC, 0600);
-	if (-1 == fd) {
-		kutil_warn(&sys->req, NULL, 
-			"%s/%s", sys->authdir, name);
+	} else if (cookie < 0) {
 		loginpage(sys, LOGINERR_SYSERR);
 		return;
 	}
-	if (write(fd, buf, strlen(buf)) < 0) {
-		kutil_warn(&sys->req, NULL, 
-			"%s/%s", sys->authdir, name);
-		loginpage(sys, LOGINERR_SYSERR);
-		close(fd);
-		return;
-	}
-	close(fd);
 
 	/* Set our cookie and limit it to one year. */
 
@@ -1277,68 +1210,6 @@ open_dir(struct sys *sys, const char *dir)
 }
 
 /*
- * Try to open the file ".htpasswd" within the cache directory.
- * Return zero on fatal error, non-zero on success.
- * The "uq" field will not be allocated if the file was not found;
- * otherwise, it will be allocated and filled with a (possibly-zero)
- * user entries.
- * Note that "uq" might be allocated on failure.
- */
-static int
-open_users(struct sys *sys, struct userq **uq)
-{
-	int		 fd;
-	FILE		*f;
-	char		*buf;
-	const char	*fn = ".htpasswd";
-	size_t		 len, line = 1;
-	char		*user, *pass;
-	struct user	*u;
-
-	fd = openat(sys->cachefd, fn, O_RDONLY, 0);
-
-	if (-1 == fd && ENOENT != errno) {
-		kutil_warn(&sys->req, NULL, 
-			"%s/%s: open", sys->cachedir, fn);
-		return(0);
-	} else if (-1 == fd) 
-		return(1);
-
-	if (NULL == (f = fdopen(fd, "r"))) {
-		kutil_warn(&sys->req, NULL, 
-			"%s/%s: fopen", sys->cachedir, fn);
-		close(fd);
-		return(0);
-	}
-
-	*uq = kmalloc(sizeof(struct userq));
-	TAILQ_INIT(*uq);
-
-	while (NULL != (buf = fgetln(f, &len))) {
-		if ('\n' != buf[len - 1])
-			continue;
-		buf[len - 1] = '\0';
-		user = buf;
-		if (NULL == (pass = strchr(user, ':'))) {
-			kutil_warn(&sys->req, NULL, 
-				"%s/%s:%zu: bad syntax", 
-				sys->cachedir, fn, line);
-			fclose(f);
-			return(0);
-		}
-		(*pass++) = '\0';
-		u = kcalloc(1, sizeof(struct user));
-		u->name = kstrdup(user);
-		u->hash = kstrdup(pass);
-		TAILQ_INSERT_TAIL(*uq, u, entries);
-		line++;
-	}
-
-	fclose(f);
-	return(1);
-}
-
-/*
  * Open our root directory, which must be absolute.
  * All subsequent operations will be relative to this path.
  * Returns zero on failure, non-zero on success.
@@ -1378,19 +1249,11 @@ open_cachedir(struct sys *sys)
 	return(-1 != sys->cachefd);
 }
 
-/*
- * Look in the authdir the cookie registered to the current user (who
- * must exist) and cross-check its unique token.
- * Returns zero on failure, non-zero on success.
- */
 static int
-check_login(struct sys *sys, const struct userq *uq)
+check_login(struct sys *sys, const struct backend *back, void *auth_arg)
 {
 	const char	*name;
-	int		 nfd;
-	FILE		*f;
-	int64_t		 cookie, ccookie;
-	const struct user *u;
+	int64_t		 cookie;
 
 	assert(NULL != sys->req.cookiemap[KEY_SESSCOOKIE]);
 	assert(NULL != sys->req.cookiemap[KEY_SESSUSER]);
@@ -1398,47 +1261,13 @@ check_login(struct sys *sys, const struct userq *uq)
 	name = sys->req.cookiemap[KEY_SESSUSER]->parsed.s;
 	cookie = sys->req.cookiemap[KEY_SESSCOOKIE]->parsed.i;
 
-	/* 
-	 * Loop for user in known users.
-	 * If we don't find one, just exit.
-	 * This prevents an attacker from spamming the log.
-	 */
+	warnx("%s", name);
 
-	TAILQ_FOREACH(u, uq, entries)
-		if (0 == strcasecmp(u->name, name))
-			break;
-
-	if (NULL == u)
-		return(0);
-
-	if (-1 == (nfd = openat(sys->authfd, name, O_RDONLY, 0))) {
-		kutil_warn(&sys->req, NULL, 
-			"%s/%s", sys->authdir, name);
-		return(0);
-	}
-
-	/* Read the cookie token from the file. */
-
-	if (NULL == (f = fdopen(nfd, "r"))) {
-		kutil_warn(&sys->req, NULL, 
-			"%s/%s", sys->authdir, name);
-		close(nfd);
-		return(0);
-	} else if (1 != fscanf(f, "%" PRId64, &ccookie)) {
-		kutil_warnx(&sys->req, NULL, 
-			"%s/%s: malformed", sys->authdir, name);
-		fclose(f);
-		return(0);
-	}
-
-	/* Does our cookie token match the one given? */
-
-	if ( ! (sys->loggedin = (cookie == ccookie)))
-		kutil_warn(&sys->req, name, "cookie token mismatch");
-	else
+	if ((*back->auth_check)(sys, auth_arg, name, cookie)) {
+		sys->loggedin = 1;
 		sys->curuser = name;
+	} 
 
-	fclose(f);
 	return(sys->loggedin);
 }
 
@@ -1450,11 +1279,19 @@ main(void)
 	enum ftype	 ftype = FTYPE_DIR;
 	char		*path = NULL;
 	struct stat	 st;
-	struct user	*u;
 	struct kpair	*kp;
 	enum action	 act = ACTION__MAX;
-	struct userq	*uq = NULL;
 	struct sys	 sys;
+	void		*auth_arg = NULL;
+	struct backend	 back;
+
+	back.auth_alloc = auth_file_alloc;
+	back.auth_free = auth_file_free;
+	back.auth_init = auth_file_init;
+	back.auth_check = auth_file_check;
+	back.auth_login = auth_file_login;
+	back.auth_enabled = auth_file_enabled;
+	back.auth_logout = auth_file_logout;
 
 	memset(&sys, 0, sizeof(struct sys));
 
@@ -1482,7 +1319,7 @@ main(void)
 		return(EXIT_FAILURE);
 	}
 
-	if (-1 == pledge("fattr rpath cpath wpath stdio", NULL))
+	if (-1 == pledge("fattr flock rpath cpath wpath stdio", NULL))
 		kutil_err(&sys.req, NULL, "pledge");
 
 	/*
@@ -1521,8 +1358,11 @@ main(void)
 		goto out;
 	}
 
-	if ( ! open_users(&sys, &uq)) {
-		errorpage(&sys, "Cannot process password file.");
+	warnx("1");
+	auth_arg = (*back.auth_alloc)();
+
+	if ( ! (*back.auth_init)(&sys, auth_arg)) {
+		errorpage(&sys, "Cannot start authenticator.");
 		goto out;
 	}
 
@@ -1578,13 +1418,13 @@ main(void)
 	/* Getting (readonly): drop privileges. */
 
 	if (ACTION_GET == act)
-		if (-1 == pledge("rpath stdio", NULL))
+		if (-1 == pledge("fattr flock rpath stdio", NULL))
 			kutil_err(&sys.req, NULL, "pledge");
 
 	/* Logging in: jump straight to login page. */
 
 	if (ACTION_LOGIN == act) {
-		post_op_login(&sys, uq);
+		post_op_login(&sys, &back, auth_arg);
 		goto out;
 	}
 
@@ -1595,10 +1435,10 @@ main(void)
 	 * kick us to the login page.
 	 */
 
-	if (NULL != uq)
+	if ((*back.auth_enabled)(auth_arg)) 
 		if (NULL == sys.req.cookiemap[KEY_SESSCOOKIE] ||
 		    NULL == sys.req.cookiemap[KEY_SESSUSER] ||
-		    ! check_login(&sys, uq)) {
+		    ! check_login(&sys, &back, auth_arg)) {
 			loginpage(&sys, LOGINERR_OK);
 			goto out;
 		}
@@ -1606,7 +1446,7 @@ main(void)
 	/* Logout only after session is validated. */
 
 	if (ACTION_LOGOUT == act && sys.loggedin) {
-		post_op_logout(&sys);
+		post_op_logout(&sys, &back, auth_arg);
 		goto out;
 	} else if (ACTION_LOGOUT == act) {
 		send_301_path(&sys, "/");
@@ -1674,16 +1514,6 @@ out:
 	if (-1 == pledge("stdio", NULL))
 		kutil_err(&sys.req, NULL, "pledge");
 
-	if (NULL != uq) {
-		while (NULL != (u = TAILQ_FIRST(uq))) {
-			TAILQ_REMOVE(uq, u, entries);
-			free(u->name);
-			free(u->hash);
-			free(u);
-		}
-		free(uq);
-	}
-
 	free(path);
 	if (-1 != sys.cachefd)
 		close(sys.cachefd);
@@ -1693,6 +1523,9 @@ out:
 		close(sys.authfd);
 	if (-1 != sys.tmpfd)
 		close(sys.tmpfd);
+
+	(*back.auth_free)(auth_arg);
+
 	khttp_free(&sys.req);
 	return(EXIT_SUCCESS);
 }

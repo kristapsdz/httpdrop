@@ -12,14 +12,18 @@ SECURE	 = -DSECURE
 
 sinclude Makefile.local
 
+OBJS	 = auth-file.o main.o
+
 CFLAGS	+= -DHTURI=\"$(HTURI)\"
 CFLAGS	+= -DDATADIR=\"$(DATADIR)\"
 CFLAGS	+= -DLOGFILE=\"$(LOGFILE)\"
 CFLAGS	+= -DCACHEDIR=\"$(CACHEDIR)\"
 CFLAGS	+= $(SECURE)
 
-httpdrop: main.o
-	$(CC) -static -o $@ main.o $(LDFLAGS) -lkcgi -lkcgihtml -lzip -lz
+httpdrop: $(OBJS)
+	$(CC) -static -o $@ $(OBJS) $(LDFLAGS) -lkcgi -lkcgihtml -lzip -lz
+
+$(OBJS): extern.h
 
 installwww: httpdrop
 	mkdir -p $(WWWDIR)/htdocs
@@ -30,4 +34,4 @@ installwww: httpdrop
 	install -m 0444 errorpage.xml page.xml loginpage.xml $(WWWDIR)/data
 
 clean:
-	rm -f httpdrop main.o
+	rm -f httpdrop $(OBJS)
