@@ -14,7 +14,7 @@
 			<div class="hero-body">
 				<div class="container">
 					<p>
-						You need credentials to access your documents.
+						You need credentials to access this system.
 						All system use is logged and monitored.
 					</p>
 					<form action="/cgi-bin/httpdrop@@URL@@" method="post">

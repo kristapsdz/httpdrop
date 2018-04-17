@@ -1,6 +1,45 @@
 (function(root) {
 	'use strict';
 
+	/*
+	 * Simple lookup function for element by name.
+	 * Emits a console warning on error.
+	 * Returns the element modified or null if none found.
+	 */
+	function find(root)
+	{
+		var e;
+
+		if (typeof root !== 'string') {
+			e = root;
+			if (null === e)
+				console.log('find: given null object');
+		} else if (null === (e = document.getElementById(root)))
+			console.log('find: no \'' + root + '\'');
+
+		return(e);
+	}
+
+	function show(name)
+	{
+		var e;
+
+		if (null === (e = find(name)))
+			return;
+		if (e.classList.contains('hide'))
+			e.classList.remove('hide');
+	}
+
+	function hide(name)
+	{
+		var e;
+
+		if (null === (e = find(name)))
+			return;
+		if ( ! e.classList.contains('hide'))
+			e.classList.add('hide');
+	}
+
 	function sendForm(e, setup, error, success, prog) 
 	{
 		var xmh = new XMLHttpRequest();
@@ -10,12 +49,14 @@
 			setup(e);
 
 		if (null !== prog)
-			xmh.upload.addEventListener("progress", function(e) {
+			xmh.upload.addEventListener
+			 ("progress", function(e) {
 				if (e.lengthComputable) {
-					var percentage = Math.round
-						((e.loaded * 100) / e.total);
+					var pct = Math.round
+						((e.loaded * 100) / 
+						 e.total);
 					if (null !== prog)
-						prog(percentage);
+						prog(pct);
 				}
 			}, false);
 
@@ -42,47 +83,39 @@
 	{
 		var file, e;
 
-		file = document.getElementById('file-name-input');
-		if (null === file)
-			return;
-		e = document.getElementById('file-name-no-file');
-		if (null !== e)
+		if (null !== (e = find('file-name-no-file')))
 			e.className = '';
-		e = document.getElementById('file-name-has-file');
-		if (null !== e)
+		if (null !== (e = find('file-name-has-file')))
 			e.className = 'hide';
-
-		file.onchange = function() {
-			if (0 === file.files.length) 
-				return;
-			e = document.getElementById('file-name-has-file');
-			if (null !== e)
-				e.className = '';
-			e = document.getElementById('file-name-no-file');
-			if (null !== e)
-				e.className = 'hide';
-		};
+		if (null !== (file = find('file-name-input')))
+			file.onchange = function() {
+				if (0 === file.files.length) 
+					return;
+				e = find('file-name-has-file');
+				if (null !== e)
+					e.className = '';
+				e = find('file-name-no-file');
+				if (null !== e)
+					e.className = 'hide';
+			};
 	}
 
 	function initUploaderSetup() 
 	{
 		var e;
 
-		e = document.getElementById('file-uploader-button');
-		if (null === e) 
-			return;
-		e.readonly = true;
-		e.innerHTML = 'Uploading: 0%';
+		if (null !== (e = find('file-uploader-button'))) {
+			e.readonly = true;
+			e.innerHTML = 'Uploading: 0%';
+		}
 	}
 
 	function initUploaderProgress(percent) 
 	{
 		var e;
 
-		e = document.getElementById('file-uploader-button');
-		if (null === e)
-			return;
-		e.innerHTML = 'Uploading: ' + percent + '%';
+		if (null !== (e = find('file-uploader-button')))
+			e.innerHTML = 'Uploading: ' + percent + '%';
 	}
 
 	function initUploaderFinish()
@@ -90,21 +123,53 @@
 		document.location.reload();
 	}
 
-	function initUploader() {
-		var e;
+	function chpassSuccess()
+	{
+		document.location.reload();
+	}
 
-		e = document.getElementById('file-uploader');
-		if (null === e)
-			return;
-		console.log('here');
-		e.onsubmit = function() {
-			sendForm(e, 
-				initUploaderSetup,
-				initUploaderFinish,
-				initUploaderFinish,
-				initUploaderProgress);
-			return(false);
-		};
+	function chpassSetup()
+	{
+		hide('message-chpass-fail');
+	}
+
+	function chpassError()
+	{
+		show('message-chpass-fail');
+	}
+
+	function initUploader() 
+	{
+		var e, list, i;
+
+		if (null !== (e = find('btn-logout')))
+			e.onclick = function() {
+				find('form-logout').submit();
+			};
+		list = document.getElementsByClassName('btn-chpass');
+		for (i = 0; i < list.length; i++)
+			list[i].onclick = function() {
+				find('chpass-modal').classList.toggle('is-active');
+				return(false);
+			};
+		if (null !== (e = find('file-uploader')))
+			e.onsubmit = function() {
+				sendForm(e, 
+					initUploaderSetup,
+					initUploaderFinish,
+					initUploaderFinish,
+					initUploaderProgress);
+				return(false);
+			};
+		if (null !== (e = find('form-chpass')))
+			e.onsubmit = function() {
+				sendForm(e,
+					chpassSetup,
+					chpassError,
+					chpassSuccess,
+					null);
+				return(false);
+			};
 	}
 
 	function initDocument() 

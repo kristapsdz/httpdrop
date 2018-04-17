@@ -21,18 +21,7 @@
 
 #include "extern.h"
 
-#ifndef	CACHEDIR
-# define CACHEDIR "/cache/httpdrop"
-#endif
-#ifndef	FILEDIR
-# define FILEDIR "files"
-#endif
-#ifndef	AUTHDIR
-# define AUTHDIR "cookies"
-#endif
-#ifndef	TMPDIR
-# define TMPDIR "tmp"
-#endif
+/* We have only one "real" page. */
 
 enum	page {
 	PAGE_INDEX,
@@ -40,6 +29,7 @@ enum	page {
 };
 
 enum	action {
+	ACTION_CHPASS,
 	ACTION_GET,
 	ACTION_GETZIP,
 	ACTION_LOGIN,
@@ -56,6 +46,7 @@ enum	key {
 	KEY_FILE,
 	KEY_FILENAME,
 	KEY_OP,
+	KEY_NPASSWD,
 	KEY_PASSWD,
 	KEY_SESSCOOKIE,
 	KEY_SESSUSER,
@@ -75,7 +66,7 @@ enum	templ {
 enum	ftype {
 	FTYPE_DIR, /* directory */
 	FTYPE_FILE, /* regular file */
-	FTYPE_OTHER
+	FTYPE_OTHER /* other/bad file */
 };
 
 enum	loginerr {
@@ -133,6 +124,7 @@ static const struct kvalid keys[KEY__MAX] = {
 	{ NULL, "file" }, /* KEY_FILE */
 	{ kvalid_stringne, "filename" }, /* KEY_FILENAME */
 	{ kvalid_stringne, "op" }, /* KEY_OP */
+	{ kvalid_stringne, "npasswd" }, /* KEY_NPASSWD */
 	{ kvalid_stringne, "passwd" }, /* KEY_PASSWD */
 	{ kvalid_int, "stok" }, /* KEY_SESSCOOKIE */
 	{ kvalid_stringne, "suser" }, /* KEY_SESSUSER */
@@ -198,7 +190,7 @@ zip_create(struct sys *sys, int nfd)
 	struct dirent	*dp;
 
 	kasprintf(&path, "%s/%s/httpdrop.XXXXXXXXXX", 
-		sys->cachedir, sys->tmpdir);
+		CACHEDIR, TMPDIR);
 
 	if (NULL == mktemp(path)) {
 		kutil_warn(&sys->req, sys->curuser, "mktemp");
@@ -226,7 +218,7 @@ zip_create(struct sys *sys, int nfd)
 		goto out;
 	} else if (NULL == (dir = fdopendir(nnfd))) {
 		kutil_warn(&sys->req, sys->curuser, "%s/%s: "
-			"fdopendir", sys->filedir, sys->resource);
+			"fdopendir", FILEDIR, sys->resource);
 		close(nnfd);
 		goto out;
 	}
@@ -238,12 +230,12 @@ zip_create(struct sys *sys, int nfd)
 		fd = openat(nfd, dp->d_name, O_RDONLY, 0);
 		if (-1 == fd) {
 			kutil_warn(&sys->req, sys->curuser,
-				"%s/%s/%s: openat", sys->filedir, 
+				"%s/%s/%s: openat", FILEDIR, 
 				sys->resource, dp->d_name);
 			goto out;
 		} else if (NULL == (f = fdopen(fd, "r"))) {
 			kutil_warn(&sys->req, sys->curuser,
-				"%s/%s/%s: fdopen", sys->filedir,
+				"%s/%s/%s: fdopen", FILEDIR,
 				sys->resource, dp->d_name);
 			close(fd);
 			goto out;
@@ -1096,7 +1088,31 @@ out:
 }
 
 static void
-post_op_logout(struct sys *sys, const struct backend *back, void *auth_arg)
+post_op_chpass(struct sys *sys, struct auth *auth_arg)
+{
+
+	assert(NULL != sys->curuser);
+	assert(sys->loggedin);
+
+	if (NULL == sys->req.fieldmap[KEY_PASSWD] ||
+	    NULL == sys->req.fieldmap[KEY_NPASSWD]) {
+		kutil_info(&sys->req, sys->curuser, "no fields");
+
+		http_open(&sys->req, KHTTP_400);
+		return;
+	}
+
+	if (auth_file_chpass(sys, 
+	    sys->req.fieldmap[KEY_PASSWD]->parsed.s,
+	    sys->req.fieldmap[KEY_NPASSWD]->parsed.s)) {
+		http_open(&sys->req, KHTTP_200);
+		kutil_info(&sys->req, sys->curuser, "changed pass");
+	} else
+		http_open(&sys->req, KHTTP_400);
+}
+
+static void
+post_op_logout(struct sys *sys, struct auth *auth_arg)
 {
 	const char	*secure;
 	char		 buf[32];
@@ -1110,7 +1126,7 @@ post_op_logout(struct sys *sys, const struct backend *back, void *auth_arg)
 	assert(NULL != sys->curuser);
 	assert(sys->loggedin);
 
-	(*back->auth_logout)(sys, auth_arg);
+	auth_file_logout(sys, auth_arg);
 
 	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
 		"%s=; path=/;%s HttpOnly; expires=%s", 
@@ -1119,11 +1135,12 @@ post_op_logout(struct sys *sys, const struct backend *back, void *auth_arg)
 		"%s=; path=/;%s HttpOnly; expires=%s", 
 		keys[KEY_SESSUSER].name, secure, buf);
 	send_301_path(sys, "/");
-	kutil_info(&sys->req, sys->curuser, "user logged out");
+	kutil_info(&sys->req, sys->curuser, 
+		"user logged in: %" PRId64, sys->curcookie);
 }
 
 static void
-post_op_login(struct sys *sys, const struct backend *back, void *auth_arg)
+post_op_login(struct sys *sys, struct auth *auth_arg)
 {
 	const char	*name, *pass, *secure;
 	char		 buf[1024];
@@ -1135,13 +1152,14 @@ post_op_login(struct sys *sys, const struct backend *back, void *auth_arg)
 		return;
 	}
 
-	warnx("2");
-
 	name = sys->req.fieldmap[KEY_USER]->parsed.s;
 	pass = sys->req.fieldmap[KEY_PASSWD]->parsed.s;
-	cookie = (*back->auth_login)(sys, auth_arg, name, pass);
+
+	cookie = auth_file_login(sys, auth_arg, name, pass);
 
 	if (0 == cookie) {
+		kutil_info(&sys->req, 
+			NULL, "user failed login");
 		loginpage(sys, LOGINERR_BADCREDS);
 		return;
 	} else if (cookie < 0) {
@@ -1167,108 +1185,105 @@ post_op_login(struct sys *sys, const struct backend *back, void *auth_arg)
 		keys[KEY_SESSUSER].name, name, secure, buf);
 	send_301(sys);
 
-	kutil_info(&sys->req, name, "user logged in");
+	kutil_info(&sys->req, name, 
+		"user logged in: %" PRId64, cookie);
 }
 
 /*
- * Try to open the non-empty and relative directory "dir" within the
- * cache directory.
+ * Try to open "dir", making it if it doesn't exist.
  * Return the file descriptor on success else -1.
  */
 static int
 open_dir(struct sys *sys, const char *dir)
 {
-	int	 fd, fl = O_RDONLY | O_DIRECTORY;
+	int	 fd;
 
-	if ('\0' == dir[0]) {
-		kutil_warn(&sys->req, NULL, 
-			"zero-length pathname");
-		return(-1);
-	} else if ('/' == dir[0]) {
-		kutil_warn(&sys->req, NULL, 
-			"%s: absolute path name", dir);
-		return(-1);
-	}
+	assert('\0' != dir[0] && '/' == dir[0]);
 
-	fd = openat(sys->cachefd, dir, fl, 0);
+	if (-1 != (fd = open(dir, O_RDONLY|O_DIRECTORY, 0)))
+		return fd;
 
 	if (-1 == fd && ENOENT == errno) {
-		kutil_info(&sys->req, NULL, 
-			"%s/%s: creating path", 
-			sys->cachedir, dir);
-		if (-1 == mkdirat(sys->cachefd, dir, 0700)) {
-			kutil_warn(&sys->req, NULL, 
-				"%s/%s: mkdir", sys->cachedir, dir);
-			return(-1);
+		if (-1 == mkdir(dir, 0700)) {
+			kutil_warn(&sys->req, NULL, "%s", dir);
+			return -1;
 		}
-		fd = openat(sys->cachefd, dir, fl, 0);
-	} else if (-1 == fd)
-		kutil_warn(&sys->req, NULL, 
-			"%s/%s: open", sys->cachedir, dir);
+		kutil_info(&sys->req, NULL, 
+			"%s: mkdir success", dir);
+		fd = open(dir, O_RDONLY|O_DIRECTORY, 0);
+	}
 
-	return(fd);
+	if (-1 == fd)
+		kutil_warn(&sys->req, NULL, "%s", dir);
+
+	return fd;
 }
 
 /*
- * Open our root directory, which must be absolute.
- * All subsequent operations will be relative to this path.
+ * Test our root directory, which must be absolute and non-empty.
+ * If it's not found, try to build it.
  * Returns zero on failure, non-zero on success.
  */
 static int
-open_cachedir(struct sys *sys)
+test_cachedir(struct sys *sys)
 {
-	int	 fl = O_RDONLY | O_DIRECTORY;
+	int	 	 fd;
+	const char	*cp = CACHEDIR;
 
-	if ('\0' == sys->cachedir[0]) {
-		kutil_warn(&sys->req, NULL, 
-			"zero-length cache pathname");
-		return(0);
-	} else if ('/' != sys->cachedir[0]) {
-		kutil_warn(&sys->req, NULL, 
-			"%s: relative cache pathname", 
-			sys->cachedir);
-		return(0);
+	assert('\0' != cp[0] && '/' == cp[0]);
+
+	fd = open(CACHEDIR, O_RDONLY|O_DIRECTORY, 0);
+	if (-1 != fd) {
+		close(fd);
+		return 1;
+	} else if (-1 == fd && ENOENT != errno) {
+		kutil_warn(&sys->req, NULL, CACHEDIR);
+		return 0;
 	}
 
-	sys->cachefd = open(sys->cachedir, fl, 0);
+	/* Try to build, if not found. */
 
-	if (-1 == sys->cachefd && ENOENT == errno) {
-		kutil_info(&sys->req, NULL, 
-			"%s: creating cache directory", 
-			sys->cachedir);
-		if (-1 == mkdir(sys->cachedir, 0700)) {
-			kutil_warn(&sys->req, NULL, 
-				"%s: mkdir", sys->cachedir);
-			return(0);
-		}
-		sys->cachefd = open(sys->cachedir, fl, 0);
-	} else if (-1 == sys->cachefd)
+	if (-1 == mkdir(CACHEDIR, 0700)) {
 		kutil_warn(&sys->req, NULL, 
-			"%s: open", sys->cachedir);
+			"%s: mkdir", CACHEDIR);
+		return 0;
+	}
+	kutil_info(&sys->req, NULL, 
+		CACHEDIR ": mkdir success");
 
-	return(-1 != sys->cachefd);
+	if (-1 != (fd = open(CACHEDIR, O_RDONLY|O_DIRECTORY, 0))) {
+		close(fd);
+		return 1;
+	}
+	kutil_warn(&sys->req, NULL, CACHEDIR);
+	return 0;
 }
 
+/*
+ * Check that we have a valid login.
+ * This involves both our cookies and their data.
+ * Returns zero on failure (no login), non-zero on success.
+ */
 static int
-check_login(struct sys *sys, const struct backend *back, void *auth_arg)
+check_login(struct sys *sys, const struct auth *auth_arg)
 {
 	const char	*name;
 	int64_t		 cookie;
 
-	assert(NULL != sys->req.cookiemap[KEY_SESSCOOKIE]);
-	assert(NULL != sys->req.cookiemap[KEY_SESSUSER]);
+	if (NULL == sys->req.cookiemap[KEY_SESSCOOKIE] ||
+	    NULL == sys->req.cookiemap[KEY_SESSUSER])
+		return 0;
 
 	name = sys->req.cookiemap[KEY_SESSUSER]->parsed.s;
 	cookie = sys->req.cookiemap[KEY_SESSCOOKIE]->parsed.i;
 
-	warnx("%s", name);
-
-	if ((*back->auth_check)(sys, auth_arg, name, cookie)) {
+	if (auth_file_check(sys, auth_arg, name, cookie)) {
 		sys->loggedin = 1;
 		sys->curuser = name;
+		sys->curcookie = cookie;
 	} 
 
-	return(sys->loggedin);
+	return sys->loggedin;
 }
 
 int
@@ -1282,24 +1297,11 @@ main(void)
 	struct kpair	*kp;
 	enum action	 act = ACTION__MAX;
 	struct sys	 sys;
-	void		*auth_arg = NULL;
-	struct backend	 back;
-
-	back.auth_alloc = auth_file_alloc;
-	back.auth_free = auth_file_free;
-	back.auth_init = auth_file_init;
-	back.auth_check = auth_file_check;
-	back.auth_login = auth_file_login;
-	back.auth_enabled = auth_file_enabled;
-	back.auth_logout = auth_file_logout;
+	struct auth	 auth_arg;
 
 	memset(&sys, 0, sizeof(struct sys));
-
-	sys.cachefd = sys.filefd = -1;
-	sys.cachedir = CACHEDIR;
-	sys.filedir = FILEDIR;
-	sys.authdir = AUTHDIR;
-	sys.tmpdir = TMPDIR;
+	memset(&auth_arg, 0, sizeof(struct auth));
+	TAILQ_INIT(&auth_arg.uq);
 
 	/* Log into a separate logfile (not system log). */
 
@@ -1315,8 +1317,9 @@ main(void)
 		KEY__MAX, pages, PAGE__MAX, PAGE_INDEX);
 
 	if (KCGI_OK != er) {
-		fprintf(stderr, "HTTP parse error: %d\n", er);
-		return(EXIT_FAILURE);
+		kutil_errx(NULL, NULL, "khttp_parse"
+			": %s", kcgi_strerror(er));
+		return EXIT_FAILURE;
 	}
 
 	if (-1 == pledge("fattr flock rpath cpath wpath stdio", NULL))
@@ -1339,13 +1342,15 @@ main(void)
 	 */
 
 	if (NULL != strstr(sys.req.fullpath, "/..") ||
-	    ('\0' != sys.req.fullpath[0] && '/' != sys.req.fullpath[0])) {
-		errorpage(&sys, "Security violation in requested path.");
+	    ('\0' != sys.req.fullpath[0] && 
+	     '/' != sys.req.fullpath[0])) {
+		errorpage(&sys, "Path security violation.");
 		goto out;
 	} 
 
 	path = kstrdup(sys.req.fullpath);
-	if ('\0' != path[0] && '/' == path[strlen(path) - 1])
+	if ('\0' != path[0] && 
+	    '/' == path[strlen(path) - 1])
 		path[strlen(path) - 1] = '\0';
 	sys.resource = path;
 	if ('/' == sys.resource[0])
@@ -1353,32 +1358,29 @@ main(void)
 
 	/* Open files/directories: cache, cookies, files. */
 
-	if ( ! open_cachedir(&sys)) {
+	if ( ! test_cachedir(&sys)) {
 		errorpage(&sys, "Cannot open cache root.");
 		goto out;
 	}
 
-	warnx("1");
-	auth_arg = (*back.auth_alloc)();
-
-	if ( ! (*back.auth_init)(&sys, auth_arg)) {
+	if ( ! auth_file_init(&sys, &auth_arg)) {
 		errorpage(&sys, "Cannot start authenticator.");
 		goto out;
 	}
 
-	if (-1 == (fd = open_dir(&sys, sys.filedir))) {
+	if (-1 == (fd = open_dir(&sys, FILEDIR))) {
 		errorpage(&sys, "Cannot open file root.");
 		goto out;
 	}
 	sys.filefd = fd;
 
-	if (-1 == (fd = open_dir(&sys, sys.authdir))) {
+	if (-1 == (fd = open_dir(&sys, AUTHDIR))) {
 		errorpage(&sys, "Cannot open authorisation root.");
 		goto out;
 	}
 	sys.authfd = fd;
 
-	if (-1 == (fd = open_dir(&sys, sys.tmpdir))) {
+	if (-1 == (fd = open_dir(&sys, TMPDIR))) {
 		errorpage(&sys, "Cannot open tmpfile root.");
 		goto out;
 	}
@@ -1393,6 +1395,8 @@ main(void)
 	if (KMETHOD_GET != sys.req.method) {
 		if (NULL == (kp = sys.req.fieldmap[KEY_OP])) 
 			act = ACTION__MAX;
+		else if (0 == strcmp(kp->parsed.s, "chpass"))
+			act = ACTION_CHPASS;
 		else if (0 == strcmp(kp->parsed.s, "mkfile"))
 			act = ACTION_MKFILE;
 		else if (0 == strcmp(kp->parsed.s, "rmfile"))
@@ -1424,7 +1428,7 @@ main(void)
 	/* Logging in: jump straight to login page. */
 
 	if (ACTION_LOGIN == act) {
-		post_op_login(&sys, &back, auth_arg);
+		post_op_login(&sys, &auth_arg);
 		goto out;
 	}
 
@@ -1435,20 +1439,23 @@ main(void)
 	 * kick us to the login page.
 	 */
 
-	if ((*back.auth_enabled)(auth_arg)) 
-		if (NULL == sys.req.cookiemap[KEY_SESSCOOKIE] ||
-		    NULL == sys.req.cookiemap[KEY_SESSUSER] ||
-		    ! check_login(&sys, &back, auth_arg)) {
-			loginpage(&sys, LOGINERR_OK);
-			goto out;
-		}
+	if (auth_arg.enable && ! check_login(&sys, &auth_arg)) {
+		loginpage(&sys, LOGINERR_OK);
+		goto out;
+	}
 
-	/* Logout only after session is validated. */
+	/* Logout and change pass only after session is validated. */
 
 	if (ACTION_LOGOUT == act && sys.loggedin) {
-		post_op_logout(&sys, &back, auth_arg);
+		post_op_logout(&sys, &auth_arg);
 		goto out;
 	} else if (ACTION_LOGOUT == act) {
+		send_301_path(&sys, "/");
+		goto out;
+	} else if (ACTION_CHPASS == act && sys.loggedin) {
+		post_op_chpass(&sys, &auth_arg);
+		goto out;
+	} else if (ACTION_CHPASS == act) {
 		send_301_path(&sys, "/");
 		goto out;
 	}
@@ -1515,8 +1522,7 @@ out:
 		kutil_err(&sys.req, NULL, "pledge");
 
 	free(path);
-	if (-1 != sys.cachefd)
-		close(sys.cachefd);
+
 	if (-1 != sys.filefd)
 		close(sys.filefd);
 	if (-1 != sys.authfd)
@@ -1524,8 +1530,7 @@ out:
 	if (-1 != sys.tmpfd)
 		close(sys.tmpfd);
 
-	(*back.auth_free)(auth_arg);
-
+	auth_file_free(&auth_arg);
 	khttp_free(&sys.req);
 	return(EXIT_SUCCESS);
 }

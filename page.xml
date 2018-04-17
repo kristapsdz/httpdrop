@@ -17,22 +17,55 @@
 	     directory is writable; else, "immutable".
 	 -->
 	<body id="page" class="@@CLASSES@@">
-		<div class="has-login container">
-			<nav class="navbar is-transparent">
-				<div class="navbar-brand">
-					<div class="navbar-item">
-						<form method="post" action="/cgi-bin/httpdrop@@URL@@" id="form-logout">
-							<input type="hidden" name="op" value="logout" />
-							<div class="field is-small">
-								<button class="button is-success" title="Logout" type="submit">
-									Logout
-								</button>
+		<div class="modal" id="chpass-modal">
+			<div class="modal-background"></div>
+			<form action="/cgi-bin/httpdrop@@URL@@" method="post" id="form-chpass">
+				<input type="hidden" name="op" value="chpass" />
+				<div class="modal-card">
+					<header class="modal-card-head">
+						<p class="modal-card-title">Change Password</p>
+						<button class="btn-chpass delete" aria-label="close"></button>
+					</header>
+					<section class="modal-card-body">
+						<div class="field hide" id="message-chpass-fail">
+							<p class="help is-danger">Bad password or missing form elements.</p>
+						</div>
+						<div class="field">
+							<label class="label">Current password</label>
+							<div class="control">
+								<input class="input" type="password" required="required" name="passwd" />
 							</div>
-						</form>
-					</div>
-					<div class="navbar-item">
-						<i class="fa fa-fw fa-user-circle-o"></i>
+						</div>
+						<div class="field">
+							<label class="label">New password</label>
+							<div class="control">
+								<input class="input" type="password" required="required" name="npasswd" />
+							</div>
+						</div>
+					</section>
+					<footer class="modal-card-foot">
+						<button type="submit" class="button is-success">Save changes</button>
+						<button type="button" class="button btn-chpass">Cancel</button>
+					</footer>
+				</div>
+			</form>
+		</div>
+		<form method="post" action="/cgi-bin/httpdrop@@URL@@" id="form-logout">
+			<input type="hidden" name="op" value="logout" />
+		</form>
+		<div class="has-login container">
+			<nav class="navbar">
+				<div class="navbar-item has-dropdown is-hoverable">
+					<a class="navbar-link">
 						@@USER@@
+					</a>
+					<div class="navbar-dropdown">
+						<a class="navbar-item btn-chpass">
+							Change password
+						</a>
+						<a class="navbar-item" id="btn-logout">
+							Logout
+						</a>
 					</div>
 				</div>
 			</nav>

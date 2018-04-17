@@ -36,6 +36,7 @@
 #page				{ padding-bottom: 1em; }
 .button .icon .fa		{ font-size: 14px; }
 .notification			{ margin: 1.12em auto; }
+.modal-card			{ margin: 0; }
 
 @media (min-width: 750px) {
  #files				{ padding: 0; }

@@ -1,6 +1,23 @@
 #ifndef EXTERN_H
 #define EXTERN_H
 
+/* Base directory of all files. */
+
+#ifndef	CACHEDIR
+# define CACHEDIR "/cache/httpdrop"
+#endif
+
+/* Directories within the CACHEDIR. */
+
+#define FILEDIR CACHEDIR "/files"
+#define AUTHDIR CACHEDIR "/cookies"
+
+/* Temporary directory. */
+
+#ifndef	TMPDIR
+# define TMPDIR "/tmp"
+#endif
+
 /*
  * This is the system object.
  * It's filled in for each request.
@@ -8,11 +25,6 @@
  * case are valid.
  */
 struct	sys {
-	const char	*cachedir; /* root of system files */
-	const char	*filedir; /* root of files */
-	const char	*authdir; /* root of cookies */
-	const char	*tmpdir; /* root of tmpfiles */
-	int		 cachefd; /* directory handle */
 	int		 filefd; /* directory handle */
 	int		 authfd; /* directory handle */
 	int		 tmpfd; /* directory handle */
@@ -20,40 +32,43 @@ struct	sys {
 	struct kreq	 req; /* request */
 	int		 loggedin; /* logged in? */
 	const char	*curuser; /* if logged in (or NULL) */
+	int64_t		 curcookie; /* user cookie (if logged in) */
 };
 
-typedef	void *(*auth_alloc)(void);
-typedef	int (*auth_init)(const struct sys *, void *);
-typedef	void (*auth_logout)(const struct sys *, void *);
-typedef	void (*auth_free)(void *);
-typedef int (*auth_check)(const struct sys *, void *,
-	const char *, int64_t); 
-typedef int64_t (*auth_login)(const struct sys *, void *,
-	const char *, const char *); 
-typedef int (*auth_enabled)(void *);
+/*
+ * A user used for logging in and session cookies.
+ * This is the data pulled from the htpasswd(1) file.
+ */
+struct	user {
+	char		 *name; /* username */
+	char		 *hash; /* bcrypt(3) password */
+	TAILQ_ENTRY(user) entries;
+};
 
-struct	backend {
-	auth_alloc	 auth_alloc;
-	auth_init	 auth_init;
-	auth_free	 auth_free;
-	auth_check	 auth_check;
-	auth_login	 auth_login;
-	auth_logout	 auth_logout;
-	auth_enabled	 auth_enabled;
+TAILQ_HEAD(userq, user);
+
+/*
+ * Holds all information required for working with the file-based
+ * authentication database: htpasswd(1).
+ */
+struct	auth {
+	struct userq	 uq; /* all users */
+	int		 enable; /* whether we're doing auth */
 };
 
 __BEGIN_DECLS
 
-void	*auth_file_alloc(void);
-void	 auth_file_free(void *);
-int	 auth_file_init(const struct sys *, void *);
-void	 auth_file_logout(const struct sys *, void *);
-int	 auth_file_check(const struct sys *, void *, 
-		const char *, int64_t);
-int64_t	 auth_file_login(const struct sys *, void *,
-		const char *, const char *);
-int	 auth_file_enabled(void *);
+struct auth	*auth_file_alloc(void);
+void		 auth_file_free(struct auth *);
+int		 auth_file_init(const struct sys *, struct auth *);
+void		 auth_file_logout(const struct sys *, struct auth *);
+int		 auth_file_check(const struct sys *, const struct auth *, 
+			const char *, int64_t);
+int		 auth_file_chpass(const struct sys *, 
+			const char *, const char *);
+int64_t		 auth_file_login(const struct sys *, const struct auth *,
+			const char *, const char *);
 
 __END_DECLS
 
-#endif /*!EXTERN_H*/
+#endif /* ! EXTERN_H */
