@@ -1088,7 +1088,7 @@ out:
 }
 
 static void
-post_op_chpass(struct sys *sys, struct auth *auth_arg)
+post_op_chpass(struct sys *sys)
 {
 
 	assert(NULL != sys->curuser);
@@ -1453,7 +1453,7 @@ main(void)
 		send_301_path(&sys, "/");
 		goto out;
 	} else if (ACTION_CHPASS == act && sys.loggedin) {
-		post_op_chpass(&sys, &auth_arg);
+		post_op_chpass(&sys);
 		goto out;
 	} else if (ACTION_CHPASS == act) {
 		send_301_path(&sys, "/");
