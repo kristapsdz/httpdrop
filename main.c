@@ -17,7 +17,9 @@
 
 #include <kcgi.h>
 #include <kcgihtml.h>
-#include <zip.h>
+#if 0
+# include <zip.h>
+#endif
 
 #include "extern.h"
 
@@ -174,6 +176,7 @@ http_open(struct kreq *r, enum khttp code)
 	http_open_mime(r, code, r->mime);
 }
 
+#if 0
 /*
  * Creates a zip file of the directory contents in "nfd".
  */
@@ -278,6 +281,7 @@ out:
 	free(path);
 	return(ret);
 }
+#endif
 
 /*
  * Fill in templates to the login page (PAGE_LOGIN).
@@ -905,6 +909,7 @@ post_op_rmdir(struct sys *sys)
 	}
 }
 
+#if 0
 static void
 post_op_getzip(struct sys *sys, int nfd)
 {
@@ -935,6 +940,7 @@ post_op_getzip(struct sys *sys, int nfd)
 	free(fname);
 	free(url);
 }
+#endif
 
 /*
  * Make a directory "pn" relative to the current path "path" with file
@@ -1080,8 +1086,10 @@ post_op_file(struct sys *sys, enum action act)
 		post_op_rmdir(sys);
 	else if (ACTION_MKDIR == act)
 		post_op_mkdir(sys, nfd, target);
+#if 0
 	else if (ACTION_GETZIP == act)
 		post_op_getzip(sys, nfd);
+#endif
 out:
 	if (-1 != nfd)
 		close(nfd);
@@ -1409,8 +1417,10 @@ main(void)
 			act = ACTION_LOGIN;
 		else if (0 == strcmp(kp->parsed.s, "logout"))
 			act = ACTION_LOGOUT;
+#if 0
 		else if (0 == strcmp(kp->parsed.s, "getzip"))
 			act = ACTION_GETZIP;
+#endif
 	} else
 		act = ACTION_GET;
 
