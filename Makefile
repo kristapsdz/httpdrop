@@ -1,16 +1,12 @@
 CFLAGS		+= -W -Wall -Wextra -g
-HTURI		 = /
-WWWDIR		 = /var/www
-DATADIR		 = /data
-LOGFILE		 = /logs/httpdrop-system.log
-LOGFFILE	 = /var/www/$(LOGFILE)
-CACHEDIR	 = /cache/httpdrop
-SECURE		 = -DSECURE
-WWWUSER		 = www
+HTURI		?= /
+WWWDIR		?= /var/www
+DATADIR		?= /data
+LOGFILE		?= /logs/httpdrop-system.log
+CACHEDIR	?= /cache/httpdrop
+SECURE		?= -DSECURE
+
 VERSION		 = 1.0.0
-
-sinclude Makefile.local
-
 DISTDIR		 = /var/www/vhosts/capem.io/htdocs/dists
 OBJS		 = auth-file.o main.o
 CFLAGS		+= -DHTURI=\"$(HTURI)\"
@@ -29,22 +25,22 @@ DOTAR		 = Makefile \
 		   main.c \
 		   page.xml
 
-httpdrop: $(OBJS)
-	$(CC) -static -o $@ $(OBJS) $(LDFLAGS) -lkcgi -lkcgihtml -lzip -lz
+all: httpdrop
 
 tgz: httpdrop.tar.gz
+
+httpdrop: $(OBJS)
+	$(CC) -static -o $@ $(OBJS) $(LDFLAGS) -lkcgi -lkcgihtml -lz
 
 $(OBJS): extern.h
 
 install: httpdrop
-	mkdir -p $(WWWDIR)/htdocs
-	mkdir -p $(WWWDIR)/cgi-bin
-	mkdir -p $(WWWDIR)/data
-	touch $(LOGFFILE)
-	chown $(WWWUSER) $(LOGFFILE)
-	install -m 0444 httpdrop.css bulma.css httpdrop.js $(WWWDIR)/htdocs
-	install -m 0755 httpdrop $(WWWDIR)/cgi-bin
-	install -m 0444 errorpage.xml page.xml loginpage.xml $(WWWDIR)/data
+	mkdir -p $(DESTDIR)$(WWWDIR)/htdocs
+	mkdir -p $(DESTDIR)$(WWWDIR)/cgi-bin
+	mkdir -p $(DESTDIR)$(WWWDIR)/data
+	install -m 0444 httpdrop.css bulma.css httpdrop.js $(DESTDIR)$(WWWDIR)/htdocs
+	install -m 0755 httpdrop $(DESTDIR)$(WWWDIR)/cgi-bin
+	install -m 0444 errorpage.xml page.xml loginpage.xml $(DESTDIR)$(WWWDIR)/data
 
 installtgz: tgz
 	mkdir -p $(DISTDIR)
