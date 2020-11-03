@@ -1,4 +1,5 @@
-CFLAGS		+= -W -Wall -Wextra -g
+VERSION		 = 1.0.0
+
 HTURI		?= /
 WWWDIR		?= /var/www
 DATADIR		?= /data
@@ -6,7 +7,11 @@ LOGFILE		?= /logs/httpdrop-system.log
 CACHEDIR	?= /cache/httpdrop
 SECURE		?= -DSECURE
 
-VERSION		 = 1.0.0
+CFLAGS		+= -g -W -Wall -Wextra
+CFLAGS_PKG	!= pkg-config --cflags kcgi-html
+CFLAGS		+= $(CFLAGS_PKG)
+LIBS_PKG	!= pkg-config --libs --static kcgi-html
+LIBS		+= $(LIBS_PKG)
 DISTDIR		 = /var/www/vhosts/capem.io/htdocs/dists
 OBJS		 = auth-file.o main.o
 CFLAGS		+= -DHTURI=\"$(HTURI)\"
@@ -30,7 +35,7 @@ all: httpdrop
 tgz: httpdrop.tar.gz
 
 httpdrop: $(OBJS)
-	$(CC) -static -o $@ $(OBJS) $(LDFLAGS) -lkcgi -lkcgihtml -lz
+	$(CC) -static -o $@ $(OBJS) $(LIBS)
 
 $(OBJS): extern.h
 
@@ -47,6 +52,7 @@ installtgz: tgz
 	install -m 0444 httpdrop.tar.gz $(DISTDIR)/httpdrop-$(VERSION).tar.gz
 
 httpdrop.tar.gz:
+	rm -rf .dist
 	mkdir -p .dist/httpdrop-$(VERSION)/
 	install -m 0644 $(DOTAR) .dist/httpdrop-$(VERSION)
 	( cd .dist/ && tar zcf ../$@ ./ )
