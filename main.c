@@ -833,7 +833,7 @@ send_301_path(struct sys *sys, const char *fullpath)
 
 	kasprintf(&path, "%s%s%s", r->pname, 
 		'/' != fullpath[0] ? "/" : "", fullpath);
-	np = kutil_urlabs(r->scheme, r->host, r->port, path);
+	np = khttp_urlabs(r->scheme, r->host, r->port, path);
 	free(path);
 
 	khttp_head(r, kresps[KRESP_LOCATION], "%s", np);
@@ -1125,7 +1125,7 @@ post_op_logout(struct sys *sys, struct auth *auth_arg)
 	const char	*secure;
 	char		 buf[32];
 
-	kutil_epoch2str(0, buf, sizeof(buf));
+	khttp_epoch2str(0, buf, sizeof(buf));
 #ifdef SECURE
 	secure = " secure;";
 #else
@@ -1182,7 +1182,7 @@ post_op_login(struct sys *sys, struct auth *auth_arg)
 #else
 	secure = "";
 #endif
-	kutil_epoch2str
+	khttp_epoch2str
 		(time(NULL) + 60 * 60 * 24 * 365,
 		 buf, sizeof(buf));
 	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
@@ -1324,11 +1324,9 @@ main(void)
 	er = khttp_parse(&sys.req, keys, 
 		KEY__MAX, pages, PAGE__MAX, PAGE_INDEX);
 
-	if (KCGI_OK != er) {
+	if (KCGI_OK != er)
 		kutil_errx(NULL, NULL, "khttp_parse"
 			": %s", kcgi_strerror(er));
-		return EXIT_FAILURE;
-	}
 
 	if (-1 == pledge("fattr flock rpath cpath wpath stdio", NULL))
 		kutil_err(&sys.req, NULL, "pledge");
