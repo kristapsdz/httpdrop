@@ -833,7 +833,7 @@ send_301_path(struct sys *sys, const char *fullpath)
 
 	kasprintf(&path, "%s%s%s", r->pname, 
 		'/' != fullpath[0] ? "/" : "", fullpath);
-	np = khttp_urlabs(r->scheme, r->host, r->port, path);
+	np = khttp_urlabs(r->scheme, r->host, r->port, path, NULL);
 	free(path);
 
 	khttp_head(r, kresps[KRESP_LOCATION], "%s", np);
