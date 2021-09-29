@@ -48,7 +48,9 @@ enum	page {
 enum	action {
 	ACTION_CHPASS,
 	ACTION_GET,
+#if 0
 	ACTION_GETZIP,
+#endif
 	ACTION_LOGIN,
 	ACTION_LOGOUT,
 	ACTION_MKDIR,
@@ -352,9 +354,9 @@ loginpage(struct sys *sys, enum loginerr error)
 
 	/* Load our template and enact sandbox. */
 
-	if (-1 == (fd = open(fn, O_RDONLY, 0)))
+	if ((fd = open(fn, O_RDONLY, 0)) == -1)
 		kutil_warn(&sys->req, sys->curuser, "%s", fn);
-	if (-1 == pledge("stdio", NULL))
+	if (pledge("stdio", NULL) == -1)
 		kutil_err(&sys->req, sys->curuser, "plege");
 
 	loginpage.sys = sys;
@@ -367,7 +369,7 @@ loginpage(struct sys *sys, enum loginerr error)
 	t.cb = loginpage_template;
 
 	http_open_mime(&sys->req, KHTTP_200, KMIME_TEXT_HTML);
-	if (-1 != fd) {
+	if (fd != -1) {
 		khttp_template_fd(&sys->req, &t, fd, fn);
 		close(fd);
 	}
@@ -429,9 +431,9 @@ errorpage(struct sys *sys, const char *fmt, ...)
 
 	/* Pre-open file descriptor so we can pledge. */
 
-	if (-1 == (fd = open(fn, O_RDONLY, 0)))
+	if ((fd = open(fn, O_RDONLY, 0)) == -1)
 		kutil_warn(&sys->req, sys->curuser, "%s", fn);
-	if (-1 == pledge("stdio", NULL))
+	if (pledge("stdio", NULL) == -1)
 		kutil_err(&sys->req, sys->curuser, "pledge");
 
 	/* Now we only use pre-opened resources. */
@@ -452,7 +454,7 @@ errorpage(struct sys *sys, const char *fmt, ...)
 
 	http_open_mime(&sys->req, KHTTP_200, KMIME_TEXT_HTML);
 
-	if (-1 == fd) {
+	if (fd == -1) {
 		khttp_puts(&sys->req, "Error: ");
 		khttp_puts(&sys->req, buf);
 	} else {
@@ -473,12 +475,12 @@ fref_cmp(const void *p1, const void *p2)
 {
 	const struct fref *f1 = p1, *f2 = p2;
 
-	if (S_ISDIR(f1->st.st_mode) && ! S_ISDIR(f2->st.st_mode))
-		return(-1);
-	if (S_ISDIR(f2->st.st_mode) && ! S_ISDIR(f1->st.st_mode))
-		return(1);
+	if (S_ISDIR(f1->st.st_mode) && !S_ISDIR(f2->st.st_mode))
+		return (-1);
+	if (S_ISDIR(f2->st.st_mode) && !S_ISDIR(f1->st.st_mode))
+		return 1;
 
-	return(strcmp(f1->name, f2->name));
+	return strcmp(f1->name, f2->name);
 }
 
 /*
@@ -493,21 +495,20 @@ check_canwrite(const struct stat *st)
 	int		 isw = 0, i, groupsz;
 	gid_t		 groups[NGROUPS_MAX];
 
-	if ((S_IWOTH & st->st_mode) ||
-	    (st->st_uid == getuid() && (S_IWUSR & st->st_mode)) ||
-	    (st->st_gid == getgid() && (S_IWGRP & st->st_mode))) {
+	if ((st->st_mode & S_IWOTH) ||
+	    (st->st_uid == getuid() && (st->st_mode & S_IWUSR)) ||
+	    (st->st_gid == getgid() && (st->st_mode & S_IWGRP))) {
 		isw = 1;
 	} else if (S_IWGRP & st->st_mode) {
 		groupsz = getgroups(sizeof(groups), groups);
-		if (-1 == groupsz)
-			return(-1);
-		for (i = 0; i < groupsz; i++) {
+		if (groupsz == -1)
+			return (-1);
+		for (i = 0; i < groupsz; i++)
 			if (st->st_gid == groups[i])
 				break;
-		}
 		isw = i < groupsz;
 	}
-	return(isw);
+	return isw;
 }
 
 /*
@@ -529,7 +530,7 @@ get_dir_template(size_t index, void *arg)
 	case TEMPL_URL:
 		khtml_puts(&req, pg->sys->req.fullpath);
 		khtml_close(&req);
-		return(1);
+		return 1;
 	case TEMPL_CLASSES:
 		strlcat(classes, pg->rdwr ?
 			" mutable" : " immutable", sizeof(classes));
@@ -543,17 +544,17 @@ get_dir_template(size_t index, void *arg)
 			" loggedin" : "", sizeof(classes));
 		khtml_puts(&req, classes);
 		khtml_close(&req);
-		return(1);
+		return 1;
 	case TEMPL_USER:
-		if (NULL != pg->sys->curuser)
+		if (pg->sys->curuser != NULL)
 			khtml_puts(&req, pg->sys->curuser);
 		khtml_close(&req);
-		return(1);
+		return 1;
 	case TEMPL_FILES:
 		break;
 	default:
 		khtml_close(&req);
-		return(0);
+		return 0;
 	}
 
 	if (pg->frefsz)
@@ -594,7 +595,7 @@ get_dir_template(size_t index, void *arg)
 		khtml_puts(&req, ctime(&ff->st.st_ctim.tv_sec));
 		khtml_closeelem(&req, 1);
 
-		if (pg->rdwr && ! (S_ISDIR(ff->st.st_mode))) {
+		if (pg->rdwr && !(S_ISDIR(ff->st.st_mode))) {
 			khtml_attr(&req, KELEM_FORM,
 				KATTR_METHOD, "post",
 				KATTR_ACTION, pg->fpath,
@@ -647,7 +648,7 @@ get_dir_template(size_t index, void *arg)
 
 	/* XXX: use CSS ids/subclassing and keep in XML. */
 
-	if (0 == pg->frefsz) {
+	if (pg->frefsz == 0) {
 		khtml_elem(&req, KELEM_P);
 		khtml_puts(&req,
 			"No files or directories to list. "
@@ -659,7 +660,7 @@ get_dir_template(size_t index, void *arg)
 
 	khtml_closeelem(&req, 4);
 	khtml_close(&req);
-	return(1);
+	return 1;
 }
 
 /*
@@ -1339,11 +1340,16 @@ main(void)
 	er = khttp_parse(&sys.req, keys,
 		KEY__MAX, pages, PAGE__MAX, PAGE_INDEX);
 
-	if (KCGI_OK != er)
+	if (er != KCGI_OK)
 		kutil_errx(NULL, NULL, "khttp_parse"
 			": %s", kcgi_strerror(er));
 
-	if (-1 == pledge("fattr flock rpath cpath wpath stdio", NULL))
+	if (unveil(CACHEDIR, "rwxc") == -1)
+		kutil_err(&sys.req, NULL, "unveil");
+	if (unveil(DATADIR, "r") == -1)
+		kutil_err(&sys.req, NULL, "unveil");
+
+	if (pledge("fattr flock rpath cpath wpath stdio", NULL) == -1)
 		kutil_err(&sys.req, NULL, "pledge");
 
 	/*
@@ -1351,8 +1357,8 @@ main(void)
 	 * make sure we're an HTML file.
 	 */
 
-	if (KMETHOD_GET != sys.req.method &&
-	    KMETHOD_POST != sys.req.method) {
+	if (sys.req.method != KMETHOD_GET &&
+	    sys.req.method != KMETHOD_POST) {
 		errorpage(&sys, "Invalid HTTP method.");
 		goto out;
 	}
@@ -1362,40 +1368,40 @@ main(void)
 	 * Then force to be relative and strip trailing slashes.
 	 */
 
-	if (NULL != strstr(sys.req.fullpath, "/..") ||
-	    ('\0' != sys.req.fullpath[0] &&
-	     '/' != sys.req.fullpath[0])) {
+	if (strstr(sys.req.fullpath, "/..") != NULL ||
+	    (sys.req.fullpath[0] != '\0' &&
+	     sys.req.fullpath[0] != '/')) {
 		errorpage(&sys, "Path security violation.");
 		goto out;
 	}
 
 	path = kstrdup(sys.req.fullpath);
-	if ('\0' != path[0] &&
-	    '/' == path[strlen(path) - 1])
+	if (path[0] != '\0' &&
+	    path[strlen(path) - 1] == '/')
 		path[strlen(path) - 1] = '\0';
 	sys.resource = path;
-	if ('/' == sys.resource[0])
+	if (sys.resource[0] == '/')
 		sys.resource++;
 
 	/* Open files/directories: cache, cookies, files. */
 
-	if ( ! test_cachedir(&sys)) {
+	if (!test_cachedir(&sys)) {
 		errorpage(&sys, "Cannot open cache root.");
 		goto out;
 	}
 
-	if ( ! auth_file_init(&sys, &auth_arg)) {
+	if (!auth_file_init(&sys, &auth_arg)) {
 		errorpage(&sys, "Cannot start authenticator.");
 		goto out;
 	}
 
-	if (-1 == (fd = open_dir(&sys, FILEDIR))) {
+	if ((fd = open_dir(&sys, FILEDIR)) == -1) {
 		errorpage(&sys, "Cannot open file root.");
 		goto out;
 	}
 	sys.filefd = fd;
 
-	if (-1 == (fd = open_dir(&sys, AUTHDIR))) {
+	if ((fd = open_dir(&sys, AUTHDIR)) == -1) {
 		errorpage(&sys, "Cannot open authorisation root.");
 		goto out;
 	}
@@ -1415,22 +1421,22 @@ main(void)
 	 * Then switch on those actions.
 	 */
 
-	if (KMETHOD_GET != sys.req.method) {
-		if (NULL == (kp = sys.req.fieldmap[KEY_OP]))
+	if (sys.req.method != KMETHOD_GET) {
+		if ((kp = sys.req.fieldmap[KEY_OP]) == NULL)
 			act = ACTION__MAX;
-		else if (0 == strcmp(kp->parsed.s, "chpass"))
+		else if (strcmp(kp->parsed.s, "chpass") == 0)
 			act = ACTION_CHPASS;
-		else if (0 == strcmp(kp->parsed.s, "mkfile"))
+		else if (strcmp(kp->parsed.s, "mkfile") == 0)
 			act = ACTION_MKFILE;
-		else if (0 == strcmp(kp->parsed.s, "rmfile"))
+		else if (strcmp(kp->parsed.s, "rmfile") == 0)
 			act = ACTION_RMFILE;
-		else if (0 == strcmp(kp->parsed.s, "rmdir"))
+		else if (strcmp(kp->parsed.s, "rmdir") == 0)
 			act = ACTION_RMDIR;
-		else if (0 == strcmp(kp->parsed.s, "mkdir"))
+		else if (strcmp(kp->parsed.s, "mkdir") == 0)
 			act = ACTION_MKDIR;
-		else if (0 == strcmp(kp->parsed.s, "login"))
+		else if (strcmp(kp->parsed.s, "login") == 0)
 			act = ACTION_LOGIN;
-		else if (0 == strcmp(kp->parsed.s, "logout"))
+		else if (strcmp(kp->parsed.s, "logout") == 0)
 			act = ACTION_LOGOUT;
 #if 0
 		else if (0 == strcmp(kp->parsed.s, "getzip"))
@@ -1439,20 +1445,20 @@ main(void)
 	} else
 		act = ACTION_GET;
 
-	if (ACTION__MAX == act) {
+	if (act == ACTION__MAX) {
 		errorpage(&sys, "Unspecified operation.");
 		goto out;
 	}
 
 	/* Getting (readonly): drop privileges. */
 
-	if (ACTION_GET == act)
+	if (act == ACTION_GET)
 		if (-1 == pledge("fattr flock rpath stdio", NULL))
 			kutil_err(&sys.req, NULL, "pledge");
 
 	/* Logging in: jump straight to login page. */
 
-	if (ACTION_LOGIN == act) {
+	if (act == ACTION_LOGIN) {
 		post_op_login(&sys, &auth_arg);
 		goto out;
 	}
@@ -1464,23 +1470,23 @@ main(void)
 	 * kick us to the login page.
 	 */
 
-	if (auth_arg.enable && ! check_login(&sys, &auth_arg)) {
+	if (auth_arg.enable && !check_login(&sys, &auth_arg)) {
 		loginpage(&sys, LOGINERR_OK);
 		goto out;
 	}
 
 	/* Logout and change pass only after session is validated. */
 
-	if (ACTION_LOGOUT == act && sys.loggedin) {
+	if (act == ACTION_LOGOUT && sys.loggedin) {
 		post_op_logout(&sys, &auth_arg);
 		goto out;
-	} else if (ACTION_LOGOUT == act) {
+	} else if (act == ACTION_LOGOUT) {
 		send_301_path(&sys, "/");
 		goto out;
-	} else if (ACTION_CHPASS == act && sys.loggedin) {
+	} else if (act == ACTION_CHPASS && sys.loggedin) {
 		post_op_chpass(&sys);
 		goto out;
-	} else if (ACTION_CHPASS == act) {
+	} else if (act == ACTION_CHPASS) {
 		send_301_path(&sys, "/");
 		goto out;
 	}
@@ -1491,11 +1497,11 @@ main(void)
 	 * Disallow non-regular or directory files.
 	 */
 
-	rc = '\0' != sys.resource[0] ?
+	rc = sys.resource[0] != '\0' ?
 		fstatat(sys.filefd, sys.resource, &st, 0) :
 		fstat(sys.filefd, &st);
 
-	if (-1 == rc) {
+	if (rc == -1) {
 		errorpage(&sys, "Resource not found or unavailable.");
 		goto out;
 	}
@@ -1526,15 +1532,15 @@ main(void)
 	 * directory) and reload.
 	 */
 
-	if (ACTION_GET == act) {
-		if (FTYPE_DIR == ftype)
+	if (act == ACTION_GET) {
+		if (ftype == FTYPE_DIR)
 			get_dir(&sys, isw);
 		else
 			get_file(&sys, &st);
 	} else {
-		if (FTYPE_DIR != ftype)
+		if (ftype != FTYPE_DIR)
 			errorpage(&sys, "Post into a regular file.");
-		else if ( ! isw && ACTION_GETZIP != act)
+		else if (!isw)
 			errorpage(&sys, "Post into readonly directory.");
 		else
 			post_op_file(&sys, act);
@@ -1543,21 +1549,18 @@ main(void)
 out:
 	/* Drop privileges and free memory. */
 
-	if (-1 == pledge("stdio", NULL))
+	if (pledge("stdio", NULL) == -1)
 		kutil_err(&sys.req, NULL, "pledge");
 
 	free(path);
 
-	if (-1 != sys.filefd)
-		close(sys.filefd);
-	if (-1 != sys.authfd)
-		close(sys.authfd);
+	close(sys.filefd);
+	close(sys.authfd);
 #if 0
-	if (-1 != sys.tmpfd)
-		close(sys.tmpfd);
+	close(sys.tmpfd);
 #endif
 
 	auth_file_free(&auth_arg);
 	khttp_free(&sys.req);
-	return(EXIT_SUCCESS);
+	return 0;
 }
