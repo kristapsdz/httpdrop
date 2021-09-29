@@ -1,125 +1,117 @@
 (function(root) {
 	'use strict';
 
-	/*
-	 * Simple lookup function for element by name.
-	 * Emits a console warning on error.
-	 * Returns the element modified or null if none found.
-	 */
 	function find(root)
 	{
-		var e;
-
-		if (typeof root !== 'string') {
-			e = root;
-			if (null === e)
-				console.log('find: given null object');
-		} else if (null === (e = document.getElementById(root)))
-			console.log('find: no \'' + root + '\'');
-
-		return(e);
+		return (typeof root !== 'string') ?
+			root : document.getElementById(root);
 	}
 
 	function show(name)
 	{
-		var e;
+		var e = find(name);
 
-		if (null === (e = find(name)))
-			return;
-		if (e.classList.contains('hide'))
+		if (e !== null && e.classList.contains('hide'))
 			e.classList.remove('hide');
 	}
 
 	function hide(name)
 	{
-		var e;
+		var e = find(name);
 
-		if (null === (e = find(name)))
-			return;
-		if ( ! e.classList.contains('hide'))
+		if (e !== null && !e.classList.contains('hide'))
 			e.classList.add('hide');
 	}
 
-	function sendForm(e, setup, error, success, prog) 
+	function sendForm(e, setup, error, success, prog)
 	{
 		var xmh = new XMLHttpRequest();
 		var url = e.action;
 
-		if (null !== setup)
+		if (setup !== null)
 			setup(e);
 
-		if (null !== prog)
-			xmh.upload.addEventListener
-			 ("progress", function(e) {
-				if (e.lengthComputable) {
-					var pct = Math.round
-						((e.loaded * 100) / 
-						 e.total);
-					if (null !== prog)
-						prog(pct);
-				}
-			}, false);
+		xmh.open(e.method, e.action, true);
 
-		xmh.onreadystatechange=function() {
-			if (xmh.readyState === 4 && 
-		  	    xmh.status === 200) {
-				console.log(url + ': success!');
-				if (null !== success)
-					success(e, xmh.responseText);
+		if (prog !== null)
+			xmh.onprogress = function(evt) {
+				if (evt.lengthComputable)
+					prog(Math.round((evt.loaded * 100) / evt.total));
+			};
+
+		xmh.onreadystatechange = function() {
+			if (xmh.readyState === 4 && xmh.status === 200) {
+				if (success !== null)
+					success();
 			} else if (xmh.readyState === 4) {
-				console.log(url + ': failure: ' + 
-					xmh.status);
-				if (null !== error)
-					error(e, xmh.status);
+				if (error !== null)
+					error();
 			}
 		};
 
-		xmh.open(e.method, e.action, true);
 		xmh.send(new FormData(e));
-		return(false);
+		return false;
 	}
 
-	function initFileName() 
+	function initFileName()
 	{
 		var file, e;
 
-		if (null !== (e = find('file-name-no-file')))
+		if ((e = find('file-name-no-file')) !== null)
 			e.className = '';
-		if (null !== (e = find('file-name-has-file')))
+		if ((e = find('file-name-has-file')) !== null)
 			e.className = 'hide';
-		if (null !== (file = find('file-name-input')))
+
+		if ((file = find('file-name-input')) !== null)
 			file.onchange = function() {
-				if (0 === file.files.length) 
+				if (file.files.length === 0)
 					return;
 				e = find('file-name-has-file');
-				if (null !== e)
+				if (e !== null)
 					e.className = '';
 				e = find('file-name-no-file');
-				if (null !== e)
+				if (e !== null)
 					e.className = 'hide';
 			};
 	}
 
-	function initUploaderSetup() 
+	function initUploaderSetup()
 	{
-		var e;
+		var e = find('file-uploader-button');
 
-		if (null !== (e = find('file-uploader-button'))) {
-			e.readonly = true;
+		if (e !== null) {
+			e.setAttribute('disabled', 'disabled');
 			e.innerHTML = 'Uploading: 0%';
 		}
 	}
 
-	function initUploaderProgress(percent) 
+	function initUploaderProgress(percent)
 	{
-		var e;
+		var e = find('file-uploader-button');
 
-		if (null !== (e = find('file-uploader-button')))
+		if (e !== null)
 			e.innerHTML = 'Uploading: ' + percent + '%';
+	}
+
+	function initUploaderError()
+	{
+		var e = find('file-uploader-button');
+
+		if (e !== null) {
+			e.innerHTML = 'Uploading: failed';
+			e.removeAttribute('disabled');
+		}
 	}
 
 	function initUploaderFinish()
 	{
+		var e = find('file-uploader-button');
+
+		if (e !== null) {
+			e.innerHTML = 'Uploading: 100%';
+			e.removeAttribute('disabled');
+		}
+
 		document.location.reload();
 	}
 
@@ -138,41 +130,43 @@
 		show('message-chpass-fail');
 	}
 
-	function initUploader() 
+	function initUploader()
 	{
-		var e, list, i;
+		var formUploader, btnLogout, formChpass, list;
 
-		if (null !== (e = find('btn-logout')))
-			e.onclick = function() {
+		if ((btnLogout = find('btn-logout')) !== null)
+			btnLogout.onclick = function() {
 				find('form-logout').submit();
 			};
+
 		list = document.getElementsByClassName('btn-chpass');
-		for (i = 0; i < list.length; i++)
+
+		for (var i = 0; i < list.length; i++)
 			list[i].onclick = function() {
 				find('chpass-modal').classList.toggle('is-active');
-				return(false);
+				return false;
 			};
-		if (null !== (e = find('file-uploader')))
-			e.onsubmit = function() {
-				sendForm(e, 
+
+		if ((formUploader = find('file-uploader')) !== null)
+			formUploader.onsubmit = function() {
+				return sendForm(formUploader,
 					initUploaderSetup,
-					initUploaderFinish,
+					initUploaderError,
 					initUploaderFinish,
 					initUploaderProgress);
-				return(false);
-			};
-		if (null !== (e = find('form-chpass')))
-			e.onsubmit = function() {
-				sendForm(e,
+			}
+
+		if ((formChpass = find('form-chpass')) !== null)
+			formChpass.onsubmit = function() {
+				return sendForm(formChpass,
 					chpassSetup,
 					chpassError,
 					chpassSuccess,
 					null);
-				return(false);
-			};
+			}
 	}
 
-	function initDocument() 
+	function initDocument()
 	{
 		initUploader();
 		initFileName();
