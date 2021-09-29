@@ -1,3 +1,5 @@
+.SUFFIXES: .in.8 .8
+
 VERSION		 = 1.0.2
 
 HTURI		?= /
@@ -12,7 +14,7 @@ CFLAGS_PKG	!= pkg-config --cflags kcgi-html
 CFLAGS		+= $(CFLAGS_PKG)
 LIBS_PKG	!= pkg-config --libs --static kcgi-html
 LIBS		+= $(LIBS_PKG)
-DISTDIR		 = /var/www/vhosts/capem.io/htdocs/dists
+DISTDIR		 = /var/www/vhosts/kristaps.bsd.lv/htdocs/httpdrop
 OBJS		 = auth-file.o main.o
 CFLAGS		+= -DHTURI=\"$(HTURI)\"
 CFLAGS		+= -DDATADIR=\"$(DATADIR)\"
@@ -25,12 +27,13 @@ DOTAR		 = Makefile \
 		   errorpage.xml \
 		   extern.h \
 		   httpdrop.css \
+		   httpdrop.in.8 \
 		   httpdrop.js \
 	   	   loginpage.xml \
 		   main.c \
 		   page.xml
 
-all: httpdrop
+all: httpdrop httpdrop.8
 
 tgz: httpdrop.tar.gz
 
@@ -57,6 +60,11 @@ httpdrop.tar.gz:
 	install -m 0644 $(DOTAR) .dist/httpdrop-$(VERSION)
 	( cd .dist/ && tar zcf ../$@ ./ )
 	rm -rf .dist/
+
+.in.8.8:
+	sed -e "s!@DATADIR@!$(WWWDIR)/$(DATADIR)!g" \
+		-e "s!@CACHEDIR@!$(WWWDIR)/$(CACHEDIR)!g" \
+		-e "s!@LOGFILE@!$(WWWDIR)/$(LOGFILE)!g" $< >$@
 
 clean:
 	rm -f httpdrop $(OBJS) httpdrop.tar.gz

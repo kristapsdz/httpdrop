@@ -1,0 +1,106 @@
+.\"	$OpenBSD: mdoc.template,v 1.15 2014/03/31 00:09:54 dlg Exp $
+.\"
+.\" Copyright (c) 2021 Kristaps Dzonsons <kristaps@bsd.lv>
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.\"
+.\" The following requests are required for all man pages.
+.Dd $Mdocdate$
+.Dt HTTPDROP 8
+.Os
+.Sh NAME
+.Nm httpdrop
+.Nd CGI program for getting and posting content
+.Sh SYNOPSIS
+.Nm httpdrop
+.Sh DESCRIPTION
+Respond to authenticated CGI requests to get or post content.
+Should be run by
+.Xr slowcgi 8 .
+.Pp
+Authorisation is cookie-based, with active cookies stored on the
+file-system.
+Cookies are created after authentication with credentials stored on the
+file-system.
+.Pp
+.Nm
+responds to the
+.Dv GET
+and
+.Dv POST
+verbs.
+If
+.Dv GET ,
+.Nm
+searches for the requested path in its content directory, returning it
+only if found.
+If the user is not authorised, they are instead directed to a login
+page.
+.Pp
+If
+.Dv POST ,
+the request is first parsed for its modification type of changing
+passsword, posting a file, removing a file, removing a directory,
+creating a directory, logging in, or logging out.
+If the user is not authorised, and the requested type is not logging in,
+they are directed to a login page.
+.Pp
+User manipulation (logging out and changing password) are always allowed
+to authorised users.
+.Pp
+File manipulation (creation and deletion of files and directories) are
+allowed to authorised users only if the target content is writable on
+the file-system.
+.\" The following requests should be uncommented and used where appropriate.
+.\" .Sh CONTEXT
+.\" For section 9 functions only.
+.\" .Sh RETURN VALUES
+.\" For sections 2, 3, and 9 function return values only.
+.\" .Sh ENVIRONMENT
+.\" For sections 1, 6, 7, and 8 only.
+.Sh FILES
+The following directories and files are used:
+.Bl -tag -width Ds
+.It Pa @DATADIR@
+Media asset directories (XML files).
+Must exist and be populated with assets.
+.It Pa @LOGFILE@
+Log file.
+Must exist and be writable by the CGI program process.
+.It Pa @CACHEDIR@/.htpasswd
+User credentials for authentication stored in
+.Xr htpasswd 1
+format.
+.It Pa @CACHEDIR@/files
+Directory for storing content.
+Created if not existing.
+May be removed at any time.
+.It Pa @CACHEDIR@/cookies
+Directory for storing session cookies.
+Created if not existing.
+May be removed at any time.
+.El
+.\" .Sh EXIT STATUS
+.\" For sections 1, 6, and 8 only.
+.\" .Sh EXAMPLES
+.\" .Sh DIAGNOSTICS
+.\" For sections 1, 4, 6, 7, 8, and 9 printf/stderr messages only.
+.\" .Sh ERRORS
+.\" For sections 2, 3, 4, and 9 errno settings only.
+.\" .Sh SEE ALSO
+.\" .Xr foobar 1
+.\" .Sh STANDARDS
+.\" .Sh HISTORY
+.\" .Sh AUTHORS
+.\" .Sh CAVEATS
+.\" .Sh BUGS

@@ -1,0 +1,5 @@
+*.o
+*.swp
+httpdrop
+httpdrop.8
+httpdrop.tar.gz
