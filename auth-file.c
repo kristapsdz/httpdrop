@@ -1,4 +1,19 @@
 /*	$Id$ */
+/*
+ * Copyright (c) 2021 Kristaps Dzonsons <kristaps@bsd.lv>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 #include <sys/queue.h>
 
 #include <assert.h>
@@ -74,7 +89,7 @@ again:
 
 	snprintf(buf, sizeof(buf), "%" PRId64, cookie);
 
-	fd = openat(sys->authfd, buf, 
+	fd = openat(sys->authfd, buf,
 		O_CREAT | O_RDWR | O_EXCL, 0600);
 
 	if (-1 == fd) {
@@ -85,7 +100,9 @@ again:
 	}
 
 	len = kasprintf(&nbuf, "%s\n", name);
-	if (write(fd, nbuf, len) < 0) {
+	assert(len >= 0);
+
+	if (write(fd, nbuf, (size_t)len) < 0) {
 		kutil_warn(&sys->req, name, AUTHDIR "/%s", buf);
 		close(fd);
 		return -1;
@@ -97,7 +114,7 @@ again:
 }
 
 int
-auth_file_chpass(const struct sys *sys, 
+auth_file_chpass(const struct sys *sys,
 	const char *oldpass, const char *newpass)
 {
 	int		 fd, rc = 0;
@@ -112,24 +129,24 @@ auth_file_chpass(const struct sys *sys,
 
 	fd = open(CACHEDIR "/.htpasswd", O_RDWR, 0);
 	if (-1 == fd) {
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			CACHEDIR "/.htpasswd");
 		return 0;
 	} else if (-1 == flock(fd, LOCK_EX)) {
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			CACHEDIR "/.htpasswd");
 		close(fd);
 		return 0;
 	} else if (NULL == (f = fdopen(fd, "r+"))) {
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			CACHEDIR "/.htpasswd");
 		flock(fd, LOCK_UN);
 		close(fd);
 		return 0;
 	}
 
-	/* 
-	 * Copy out all users. 
+	/*
+	 * Copy out all users.
 	 * From here on our, use the "out" label, which will clean up
 	 * the user/password array.
 	 */
@@ -141,7 +158,7 @@ auth_file_chpass(const struct sys *sys,
 		buf[len - 1] = '\0';
 		user = buf;
 		if (NULL == (pass = strchr(user, ':'))) {
-			kutil_warnx(&sys->req, sys->curuser, 
+			kutil_warnx(&sys->req, sys->curuser,
 				CACHEDIR "/.htpasswd:%zu: "
 				"bad syntax", line);
 			goto out;
@@ -154,8 +171,8 @@ auth_file_chpass(const struct sys *sys,
 		line++;
 	}
 
-	/* 
-	 * Check if we have the requested user. 
+	/*
+	 * Check if we have the requested user.
 	 * Make sure that their password is good.
 	 */
 
@@ -164,11 +181,11 @@ auth_file_chpass(const struct sys *sys,
 			break;
 
 	if (NULL == u) {
-		kutil_warnx(&sys->req, sys->curuser, CACHEDIR 
+		kutil_warnx(&sys->req, sys->curuser, CACHEDIR
 			"/.htpasswd: user disappeared");
 		goto out;
 	} else if (crypt_checkpass(oldpass, u->hash)) {
-		kutil_warnx(&sys->req, sys->curuser, CACHEDIR 
+		kutil_warnx(&sys->req, sys->curuser, CACHEDIR
 			"/.htpasswd: bad old password: %s", oldpass);
 		goto out;
 	}
@@ -179,7 +196,7 @@ auth_file_chpass(const struct sys *sys,
 	u->hash = malloc(128 + 1);
 	u->hash[128] = '\0';
 
-	if (crypt_newhash(newpass, 
+	if (crypt_newhash(newpass,
    	    "bcrypt,a", u->hash, 128)) {
 		kutil_warn(&sys->req, sys->curuser, "crypt_newhash");
 		goto out;
@@ -189,9 +206,9 @@ auth_file_chpass(const struct sys *sys,
 
 	rewind(f);
 	TAILQ_FOREACH(u, &uq, entries) {
-		if (fprintf(f, "%s:%s\n", u->name, u->hash) > 0) 
+		if (fprintf(f, "%s:%s\n", u->name, u->hash) > 0)
 			continue;
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			CACHEDIR "/.htpasswd");
 		goto out;
 	}
@@ -233,13 +250,13 @@ auth_file_init(const struct sys *sys, struct auth *p)
 	fd = open(CACHEDIR "/.htpasswd", O_RDONLY, 0);
 
 	if (-1 == fd && ENOENT != errno) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, NULL,
 			CACHEDIR "/.htpasswd");
 		return 0;
-	} else if (-1 == fd) 
+	} else if (-1 == fd)
 		return 1;
 
-	/* 
+	/*
 	 * Since we were able to open the file, we have authorisation
 	 * enabled---even if there are no entries.
 	 */
@@ -247,14 +264,14 @@ auth_file_init(const struct sys *sys, struct auth *p)
 	p->enable = 1;
 
 	if (-1 == flock(fd, LOCK_EX)) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, NULL,
 			CACHEDIR "/.htpasswd");
 		close(fd);
 		return 0;
 	}
 
 	if (NULL == (f = fdopen(fd, "r"))) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, NULL,
 			CACHEDIR "/.htpasswd");
 		flock(fd, LOCK_UN);
 		close(fd);
@@ -267,7 +284,7 @@ auth_file_init(const struct sys *sys, struct auth *p)
 		buf[len - 1] = '\0';
 		user = buf;
 		if (NULL == (pass = strchr(user, ':'))) {
-			kutil_warn(&sys->req, NULL, 
+			kutil_warn(&sys->req, NULL,
 				CACHEDIR "/.htpasswd:%zu: "
 				"bad syntax", line);
 			flock(fd, LOCK_UN);
@@ -283,7 +300,7 @@ auth_file_init(const struct sys *sys, struct auth *p)
 	}
 
 	flock(fd, LOCK_UN);
-	fclose(f); 
+	fclose(f);
 	return 1;
 }
 
@@ -293,7 +310,7 @@ auth_file_init(const struct sys *sys, struct auth *p)
  * Returns zero on failure, non-zero on success.
  */
 int
-auth_file_check(const struct sys *sys, 
+auth_file_check(const struct sys *sys,
 	const struct auth *p, const char *name, int64_t cookie)
 {
 	int		    nfd, loggedin = 0;
@@ -306,7 +323,7 @@ auth_file_check(const struct sys *sys,
 
 	assert(p->enable);
 
-	/* 
+	/*
 	 * Loop for user in known users.
 	 * If we don't find one, just exit.
 	 * This prevents an attacker from spamming the log.
@@ -323,10 +340,10 @@ auth_file_check(const struct sys *sys,
 
 	if (-1 == (nfd = openat(sys->authfd, buf, O_RDONLY, 0))) {
 		if (ENOENT != errno)
-			kutil_warn(&sys->req, name, 
+			kutil_warn(&sys->req, name,
 				AUTHDIR "/%s", buf);
 		else
-			kutil_info(&sys->req, name, 
+			kutil_info(&sys->req, name,
 				AUTHDIR "/%s: cookie not found", buf);
 		return 0;
 	}
@@ -352,7 +369,7 @@ auth_file_check(const struct sys *sys,
 	/* Does our cookie token match the one given? */
 
 	if ( ! (loggedin = (0 == strcmp(line, name))))
-		kutil_info(&sys->req, name, 
+		kutil_info(&sys->req, name,
 			"cookie owner mismatch: have %s", line);
 
 	free(line);

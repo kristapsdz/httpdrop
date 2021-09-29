@@ -1,4 +1,19 @@
 /*	$Id$ */
+/*
+ * Copyright (c) 2021 Kristaps Dzonsons <kristaps@bsd.lv>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 #include <sys/queue.h>
 #include <sys/param.h>
 #include <sys/stat.h>
@@ -142,7 +157,7 @@ static const char *const templs[TEMPL__MAX] = {
 };
 
 static void
-errorpage(struct sys *, const char *, ...) 
+errorpage(struct sys *, const char *, ...)
 	__attribute__((format(printf, 2, 3)));
 
 /*
@@ -154,11 +169,11 @@ static void
 http_open_mime(struct kreq *r, enum khttp code, enum kmime mime)
 {
 
-	khttp_head(r, kresps[KRESP_STATUS], 
+	khttp_head(r, kresps[KRESP_STATUS],
 		"%s", khttps[code]);
 	if (KMIME__MAX == mime)
 		mime = KMIME_APP_OCTET_STREAM;
-	khttp_head(r, kresps[KRESP_CONTENT_TYPE], 
+	khttp_head(r, kresps[KRESP_CONTENT_TYPE],
 		"%s", kmimetypes[mime]);
 	khttp_head(r, "X-Content-Type-Options", "nosniff");
 	khttp_head(r, "X-Frame-Options", "DENY");
@@ -173,7 +188,7 @@ static void
 http_open(struct kreq *r, enum khttp code)
 {
 
-	http_open_mime(r, code, r->mime);
+	http_open_mime(r, code, (enum kmime)r->mime);
 }
 
 #if 0
@@ -192,13 +207,13 @@ zip_create(struct sys *sys, int nfd)
 	zip_source_t	*src;
 	struct dirent	*dp;
 
-	kasprintf(&path, "%s/%s/httpdrop.XXXXXXXXXX", 
+	kasprintf(&path, "%s/%s/httpdrop.XXXXXXXXXX",
 		CACHEDIR, TMPDIR);
 
 	if (NULL == mktemp(path)) {
 		kutil_warn(&sys->req, sys->curuser, "mktemp");
 		return(NULL);
-	} 
+	}
 
 	zip = zip_open(path, ZIP_CREATE | ZIP_EXCL, &erp);
 
@@ -210,7 +225,7 @@ zip_create(struct sys *sys, int nfd)
 		goto out;
 	}
 
-	/* 
+	/*
 	 * Iterate through regular non-dot files in nfd.
 	 * We make a copy of nfd because fdopendir() will swallow the
 	 * descriptor and close it on closedir().
@@ -233,7 +248,7 @@ zip_create(struct sys *sys, int nfd)
 		fd = openat(nfd, dp->d_name, O_RDONLY, 0);
 		if (-1 == fd) {
 			kutil_warn(&sys->req, sys->curuser,
-				"%s/%s/%s: openat", FILEDIR, 
+				"%s/%s/%s: openat", FILEDIR,
 				sys->resource, dp->d_name);
 			goto out;
 		} else if (NULL == (f = fdopen(fd, "r"))) {
@@ -253,7 +268,7 @@ zip_create(struct sys *sys, int nfd)
 			fclose(f);
 			goto out;
 		} else if (zip_file_add(zip, dp->d_name, src, 0) < 0) {
-			kutil_warnx(&sys->req, sys->curuser, 
+			kutil_warnx(&sys->req, sys->curuser,
 				"%s: %s", path, zip_strerror(zip));
 			zip_source_free(src);
 			goto out;
@@ -265,7 +280,7 @@ zip_create(struct sys *sys, int nfd)
 	closedir(dir);
 	dir = NULL;
 	if ((erp = zip_close(zip)) < 0) {
-		kutil_warnx(&sys->req, sys->curuser, 
+		kutil_warnx(&sys->req, sys->curuser,
 			"%s: %s", path, zip_strerror(zip));
 		goto out;
 	}
@@ -337,7 +352,7 @@ loginpage(struct sys *sys, enum loginerr error)
 
 	/* Load our template and enact sandbox. */
 
-	if (-1 == (fd = open(fn, O_RDONLY, 0))) 
+	if (-1 == (fd = open(fn, O_RDONLY, 0)))
 		kutil_warn(&sys->req, sys->curuser, "%s", fn);
 	if (-1 == pledge("stdio", NULL))
 		kutil_err(&sys->req, sys->curuser, "plege");
@@ -548,7 +563,7 @@ get_dir_template(size_t index, void *arg)
 		ff = &pg->frefs[i];
 		khtml_elem(&req, KELEM_LI);
 		khtml_attr(&req, KELEM_A,
-			KATTR_HREF, ff->fullname, 
+			KATTR_HREF, ff->fullname,
 			KATTR__MAX);
 		khtml_puts(&req, ff->name);
 		if (S_ISDIR(ff->st.st_mode))
@@ -559,11 +574,11 @@ get_dir_template(size_t index, void *arg)
 		if (S_ISDIR(ff->st.st_mode)) {
 			khtml_puts(&req, "");
 		} else if (ff->st.st_size > 1024 * 1024 * 1024) {
-			khtml_int(&req, 
+			khtml_int(&req,
 				ff->st.st_size / 1024/1024/1024);
 			khtml_puts(&req, " GB");
 		} else if (ff->st.st_size > 1024 * 1024) {
-			khtml_int(&req, 
+			khtml_int(&req,
 				ff->st.st_size / 1024/1024);
 			khtml_puts(&req, " MB");
 		} else if (ff->st.st_size > 1024) {
@@ -634,7 +649,7 @@ get_dir_template(size_t index, void *arg)
 
 	if (0 == pg->frefsz) {
 		khtml_elem(&req, KELEM_P);
-		khtml_puts(&req, 
+		khtml_puts(&req,
 			"No files or directories to list. "
 			"Time to create or upload some?");
 		khtml_closeelem(&req, 1);
@@ -670,10 +685,10 @@ get_dir(struct sys *sys, int rdwr)
 	if ('\0' != sys->resource[0]) {
 		nfd = openat(sys->filefd, sys->resource, fl, 0);
 		if (-1 == nfd)
-			kutil_warn(&sys->req, sys->curuser, 
+			kutil_warn(&sys->req, sys->curuser,
 				"%s: openat", sys->resource);
 	} else if (-1 == (nfd = dup(sys->filefd)))
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			"%s: dup", sys->resource);
 
 	if (-1 == nfd) {
@@ -681,7 +696,7 @@ get_dir(struct sys *sys, int rdwr)
 		return;
 	}
 
-	/* 
+	/*
 	 * Get the DIR pointer from the directory request.
 	 * We clone nfd because fdopendir() will take ownership.
 	 * Then read all acceptable entries into our "files" array.
@@ -692,7 +707,7 @@ get_dir(struct sys *sys, int rdwr)
 		errorpage(sys, "System error.");
 		return;
 	} else if (NULL == (dir = fdopendir(nnfd))) {
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			"%s: fdopendir", sys->resource);
 		errorpage(sys, "System error.");
 		close(nnfd);
@@ -700,17 +715,17 @@ get_dir(struct sys *sys, int rdwr)
 	}
 
 	while (NULL != (dp = readdir(dir))) {
-		/* 
+		/*
 		 * Disallow non-regular or directory, the current
 		 * directory, any dot-files, and previous when in the
 		 * root.
 		 */
 
-		if ((DT_DIR != dp->d_type && 
+		if ((DT_DIR != dp->d_type &&
 		     DT_REG != dp->d_type) ||
-		    (DT_DIR == dp->d_type && 
+		    (DT_DIR == dp->d_type &&
 		     0 == strcmp(dp->d_name, ".")) ||
-		    (DT_REG == dp->d_type && 
+		    (DT_REG == dp->d_type &&
 		     '.' == dp->d_name[0]) ||
 		    (0 == strcmp(dp->d_name, "..") &&
 		    '\0' == sys->resource[0]))
@@ -719,11 +734,11 @@ get_dir(struct sys *sys, int rdwr)
 		if (-1 == fstatat(nfd, dp->d_name, &st, 0))
 			continue;
 
-		kasprintf(&fpath, "%s/%s%s%s", sys->req.pname, 
-			sys->resource, 
-			'\0' != sys->resource[0] ? "/" : "", 
+		kasprintf(&fpath, "%s/%s%s%s", sys->req.pname,
+			sys->resource,
+			'\0' != sys->resource[0] ? "/" : "",
 			dp->d_name);
-		files = kreallocarray(files, 
+		files = kreallocarray(files,
 			filesz + 1, sizeof(struct fref));
 		files[filesz].st = st;
 		files[filesz].name = kstrdup(dp->d_name);
@@ -746,7 +761,7 @@ get_dir(struct sys *sys, int rdwr)
 
 	qsort(files, filesz, sizeof(struct fref), fref_cmp);
 
-	kasprintf(&fpath, "%s/%s%s", sys->req.pname, 
+	kasprintf(&fpath, "%s/%s%s", sys->req.pname,
 		sys->resource, '\0' != sys->resource[0] ? "/" : "");
 
 	dirpage.frefs = files;
@@ -801,12 +816,12 @@ get_file(struct sys *sys, const struct stat *st)
 
 	nfd = openat(sys->filefd, sys->resource, O_RDONLY, 0);
 	if (-1 == nfd) {
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			"%s: openat", sys->resource);
 		errorpage(sys, "Cannot open \"%s\".", sys->resource);
 		return;
 	} else if (-1 == pledge("stdio", NULL))
-		kutil_err(&sys->req, sys->curuser, 
+		kutil_err(&sys->req, sys->curuser,
 			"%s", sys->resource);
 
 	/*
@@ -831,7 +846,7 @@ send_301_path(struct sys *sys, const char *fullpath)
 	char	*np, *path;
 	struct kreq	*r = &sys->req;
 
-	kasprintf(&path, "%s%s%s", r->pname, 
+	kasprintf(&path, "%s%s%s", r->pname,
 		'/' != fullpath[0] ? "/" : "", fullpath);
 	np = khttp_urlabs(r->scheme, r->host, r->port, path, NULL);
 	free(path);
@@ -862,11 +877,11 @@ post_op_rmfile(struct sys *sys, int nfd, const char *fn)
 {
 
 	if (-1 == unlinkat(nfd, fn, 0) && ENOENT != errno) {
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			"%s/%s: unlinkat", sys->resource, fn);
 		errorpage(sys, "Cannot remove \"%s\".", fn);
 	} else {
-		kutil_info(&sys->req, sys->curuser, 
+		kutil_info(&sys->req, sys->curuser,
 			"%s/%s: unlink", sys->resource, fn);
 		send_301(sys);
 	}
@@ -883,7 +898,7 @@ post_op_rmdir(struct sys *sys)
 	int	 rc;
 
 	if ('\0' == sys->resource[0]) {
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			"cannot removing root");
 		errorpage(sys, "You cannot remove this directory.");
 		return;
@@ -892,11 +907,11 @@ post_op_rmdir(struct sys *sys)
 	rc = unlinkat(sys->filefd, sys->resource, AT_REMOVEDIR);
 
 	if (-1 == rc && ENOENT != errno) {
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			"%s: unlinkat (dir)", sys->resource);
 		errorpage(sys, "Cannot remove \"%s\".", sys->resource);
 	} else {
-		kutil_info(&sys->req, sys->curuser, 
+		kutil_info(&sys->req, sys->curuser,
 			"%s: unlink (dir)", sys->resource);
 		newpath = kstrdup(sys->resource);
 		/* Strip to path above. */
@@ -932,7 +947,7 @@ post_op_getzip(struct sys *sys, int nfd)
 		return;
 	}
 
-	khttp_head(&sys->req, kresps[KRESP_CONTENT_DISPOSITION], 
+	khttp_head(&sys->req, kresps[KRESP_CONTENT_DISPOSITION],
 		"attachment; filename=\"%s\"", url);
 	http_open_mime(&sys->req, KHTTP_200, KMIME_APP_ZIP);
 	khttp_template(&sys->req, NULL, fname);
@@ -951,11 +966,11 @@ post_op_mkdir(struct sys *sys, int nfd, const char *pn)
 {
 
 	if (-1 == mkdirat(nfd, pn, 0700) && EEXIST != errno) {
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			"%s/%s: mkdirat", sys->resource, pn);
 		errorpage(sys, "Cannot create \"%s\".", pn);
 	} else {
-		kutil_info(&sys->req, sys->curuser, 
+		kutil_info(&sys->req, sys->curuser,
 			"%s/%s: created", sys->resource, pn);
 		send_301(sys);
 	}
@@ -976,7 +991,7 @@ post_op_mkfile(struct sys *sys, int nfd)
 
 	for (kp = sys->req.fieldmap[KEY_FILE]; NULL != kp; kp = kp->next)
 		if ('\0' == kp->file[0] ||
-		    NULL != strchr(kp->file, '/') || 
+		    NULL != strchr(kp->file, '/') ||
 		    '.' == kp->file[0]) {
 			errorpage(sys, "Filename security violation.");
 			return;
@@ -984,29 +999,29 @@ post_op_mkfile(struct sys *sys, int nfd)
 
 	for (kp = sys->req.fieldmap[KEY_FILE]; NULL != kp; kp = kp->next) {
 		if (-1 == (dfd = openat(nfd, kp->file, fl, 0600))) {
-			kutil_warn(&sys->req, sys->curuser, 
-				"%s/%s: openat", sys->resource, 
+			kutil_warn(&sys->req, sys->curuser,
+				"%s/%s: openat", sys->resource,
 				kp->file);
 			errorpage(sys, "System error.");
 			return;
 		}
 		if ((ssz = write(dfd, kp->val, kp->valsz)) < 0) {
-			kutil_warn(&sys->req, sys->curuser, 
-				"%s/%s: write", sys->resource, 
+			kutil_warn(&sys->req, sys->curuser,
+				"%s/%s: write", sys->resource,
 				kp->file);
 			errorpage(sys, "System error.");
 			close(dfd);
 			return;
 		} else if ((size_t)ssz < kp->valsz) {
-			kutil_warnx(&sys->req, sys->curuser, 
-				"%s/%s: short write", 
+			kutil_warnx(&sys->req, sys->curuser,
+				"%s/%s: short write",
 				sys->resource, kp->file);
 			errorpage(sys, "System error.");
 			close(dfd);
 			return;
 		} else {
-			kutil_info(&sys->req, sys->curuser, 
-				"%s/%s: wrote %zu bytes", 
+			kutil_info(&sys->req, sys->curuser,
+				"%s/%s: wrote %zu bytes",
 				sys->resource, kp->file, kp->valsz);
 		}
 		close(dfd);
@@ -1033,7 +1048,7 @@ post_op_file(struct sys *sys, enum action act)
 	     '\0' == sys->req.fieldmap[KEY_FILE]->file[0])) {
 		send_301(sys);
 		return;
-	} 
+	}
 
 	if (ACTION_RMFILE == act &&
 	    NULL == sys->req.fieldmap[KEY_FILENAME]) {
@@ -1065,10 +1080,10 @@ post_op_file(struct sys *sys, enum action act)
 	if ('\0' != sys->resource[0]) {
 		nfd = openat(sys->filefd, sys->resource, dfl, 0);
 		if (-1 == nfd)
-			kutil_warn(&sys->req, sys->curuser, 
+			kutil_warn(&sys->req, sys->curuser,
 				"%s: openat", sys->resource);
 	} else if (-1 == (nfd = dup(sys->filefd)))
-		kutil_warn(&sys->req, sys->curuser, 
+		kutil_warn(&sys->req, sys->curuser,
 			"%s: dup", sys->resource);
 
 	if (-1 == nfd) {
@@ -1110,7 +1125,7 @@ post_op_chpass(struct sys *sys)
 		return;
 	}
 
-	if (auth_file_chpass(sys, 
+	if (auth_file_chpass(sys,
 	    sys->req.fieldmap[KEY_PASSWD]->parsed.s,
 	    sys->req.fieldmap[KEY_NPASSWD]->parsed.s)) {
 		http_open(&sys->req, KHTTP_200);
@@ -1137,13 +1152,13 @@ post_op_logout(struct sys *sys, struct auth *auth_arg)
 	auth_file_logout(sys, auth_arg);
 
 	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
-		"%s=; path=/;%s HttpOnly; expires=%s", 
+		"%s=; path=/;%s HttpOnly; expires=%s",
 		keys[KEY_SESSCOOKIE].name, secure, buf);
 	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
-		"%s=; path=/;%s HttpOnly; expires=%s", 
+		"%s=; path=/;%s HttpOnly; expires=%s",
 		keys[KEY_SESSUSER].name, secure, buf);
 	send_301_path(sys, "/");
-	kutil_info(&sys->req, sys->curuser, 
+	kutil_info(&sys->req, sys->curuser,
 		"user logged in: %" PRId64, sys->curcookie);
 }
 
@@ -1166,7 +1181,7 @@ post_op_login(struct sys *sys, struct auth *auth_arg)
 	cookie = auth_file_login(sys, auth_arg, name, pass);
 
 	if (0 == cookie) {
-		kutil_info(&sys->req, 
+		kutil_info(&sys->req,
 			NULL, "user failed login");
 		loginpage(sys, LOGINERR_BADCREDS);
 		return;
@@ -1186,14 +1201,14 @@ post_op_login(struct sys *sys, struct auth *auth_arg)
 		(time(NULL) + 60 * 60 * 24 * 365,
 		 buf, sizeof(buf));
 	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
-		"%s=%" PRId64 ";%s HttpOnly; path=/; expires=%s", 
+		"%s=%" PRId64 ";%s HttpOnly; path=/; expires=%s",
 		keys[KEY_SESSCOOKIE].name, cookie, secure, buf);
 	khttp_head(&sys->req, kresps[KRESP_SET_COOKIE],
-		"%s=%s;%s HttpOnly; path=/; expires=%s", 
+		"%s=%s;%s HttpOnly; path=/; expires=%s",
 		keys[KEY_SESSUSER].name, name, secure, buf);
 	send_301(sys);
 
-	kutil_info(&sys->req, name, 
+	kutil_info(&sys->req, name,
 		"user logged in: %" PRId64, cookie);
 }
 
@@ -1216,7 +1231,7 @@ open_dir(struct sys *sys, const char *dir)
 			kutil_warn(&sys->req, NULL, "%s", dir);
 			return -1;
 		}
-		kutil_info(&sys->req, NULL, 
+		kutil_info(&sys->req, NULL,
 			"%s: mkdir success", dir);
 		fd = open(dir, O_RDONLY|O_DIRECTORY, 0);
 	}
@@ -1252,11 +1267,11 @@ test_cachedir(struct sys *sys)
 	/* Try to build, if not found. */
 
 	if (-1 == mkdir(CACHEDIR, 0700)) {
-		kutil_warn(&sys->req, NULL, 
+		kutil_warn(&sys->req, NULL,
 			"%s: mkdir", CACHEDIR);
 		return 0;
 	}
-	kutil_info(&sys->req, NULL, 
+	kutil_info(&sys->req, NULL,
 		CACHEDIR ": mkdir success");
 
 	if (-1 != (fd = open(CACHEDIR, O_RDONLY|O_DIRECTORY, 0))) {
@@ -1289,7 +1304,7 @@ check_login(struct sys *sys, const struct auth *auth_arg)
 		sys->loggedin = 1;
 		sys->curuser = name;
 		sys->curcookie = cookie;
-	} 
+	}
 
 	return sys->loggedin;
 }
@@ -1315,13 +1330,13 @@ main(void)
 
 	kutil_openlog(LOGFILE);
 
-	/* 
+	/*
 	 * Actually parse HTTP document.
 	 * Then drop privileges to only have file-system access.
 	 * (The pledge will further narrow based on request.)
 	 */
 
-	er = khttp_parse(&sys.req, keys, 
+	er = khttp_parse(&sys.req, keys,
 		KEY__MAX, pages, PAGE__MAX, PAGE_INDEX);
 
 	if (KCGI_OK != er)
@@ -1336,26 +1351,26 @@ main(void)
 	 * make sure we're an HTML file.
 	 */
 
-	if (KMETHOD_GET != sys.req.method && 
+	if (KMETHOD_GET != sys.req.method &&
 	    KMETHOD_POST != sys.req.method) {
 		errorpage(&sys, "Invalid HTTP method.");
 		goto out;
 	}
 
-	/* 
+	/*
 	 * Security: don't let us request a relative path.
 	 * Then force to be relative and strip trailing slashes.
 	 */
 
 	if (NULL != strstr(sys.req.fullpath, "/..") ||
-	    ('\0' != sys.req.fullpath[0] && 
+	    ('\0' != sys.req.fullpath[0] &&
 	     '/' != sys.req.fullpath[0])) {
 		errorpage(&sys, "Path security violation.");
 		goto out;
-	} 
+	}
 
 	path = kstrdup(sys.req.fullpath);
-	if ('\0' != path[0] && 
+	if ('\0' != path[0] &&
 	    '/' == path[strlen(path) - 1])
 		path[strlen(path) - 1] = '\0';
 	sys.resource = path;
@@ -1394,14 +1409,14 @@ main(void)
 	sys.tmpfd = fd;
 #endif
 
-	/* 
+	/*
 	 * Now figure out what we're supposed to do here.
 	 * This will sanitise our request action.
 	 * Then switch on those actions.
 	 */
 
 	if (KMETHOD_GET != sys.req.method) {
-		if (NULL == (kp = sys.req.fieldmap[KEY_OP])) 
+		if (NULL == (kp = sys.req.fieldmap[KEY_OP]))
 			act = ACTION__MAX;
 		else if (0 == strcmp(kp->parsed.s, "chpass"))
 			act = ACTION_CHPASS;
@@ -1476,8 +1491,8 @@ main(void)
 	 * Disallow non-regular or directory files.
 	 */
 
-	rc = '\0' != sys.resource[0] ? 
-		fstatat(sys.filefd, sys.resource, &st, 0) : 
+	rc = '\0' != sys.resource[0] ?
+		fstatat(sys.filefd, sys.resource, &st, 0) :
 		fstat(sys.filefd, &st);
 
 	if (-1 == rc) {
