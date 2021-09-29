@@ -1386,11 +1386,13 @@ main(void)
 	}
 	sys.authfd = fd;
 
+#if 0
 	if (-1 == (fd = open_dir(&sys, TMPDIR))) {
 		errorpage(&sys, "Cannot open tmpfile root.");
 		goto out;
 	}
 	sys.tmpfd = fd;
+#endif
 
 	/* 
 	 * Now figure out what we're supposed to do here.
@@ -1535,8 +1537,10 @@ out:
 		close(sys.filefd);
 	if (-1 != sys.authfd)
 		close(sys.authfd);
+#if 0
 	if (-1 != sys.tmpfd)
 		close(sys.tmpfd);
+#endif
 
 	auth_file_free(&auth_arg);
 	khttp_free(&sys.req);

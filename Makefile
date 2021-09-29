@@ -14,7 +14,7 @@ CFLAGS_PKG	!= pkg-config --cflags kcgi-html
 CFLAGS		+= $(CFLAGS_PKG)
 LIBS_PKG	!= pkg-config --libs --static kcgi-html
 LIBS		+= $(LIBS_PKG)
-DISTDIR		 = /var/www/vhosts/kristaps.bsd.lv/htdocs/httpdrop
+DISTDIR		 = /var/www/vhosts/kristaps.bsd.lv/htdocs/httpdrop/snapshots
 OBJS		 = auth-file.o main.o
 CFLAGS		+= -DHTURI=\"$(HTURI)\"
 CFLAGS		+= -DDATADIR=\"$(DATADIR)\"
@@ -67,4 +67,4 @@ httpdrop.tar.gz:
 		-e "s!@LOGFILE@!$(WWWDIR)/$(LOGFILE)!g" $< >$@
 
 clean:
-	rm -f httpdrop $(OBJS) httpdrop.tar.gz
+	rm -f httpdrop httpdrop.8 $(OBJS) httpdrop.tar.gz

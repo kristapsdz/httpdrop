@@ -14,8 +14,10 @@
 
 /* Temporary directory. */
 
-#ifndef	TMPDIR
-# define TMPDIR "/tmp"
+#if 0
+# ifndef TMPDIR
+#  define TMPDIR "/tmp"
+# endif
 #endif
 
 /*
@@ -27,7 +29,9 @@
 struct	sys {
 	int		 filefd; /* directory handle */
 	int		 authfd; /* directory handle */
+#if 0
 	int		 tmpfd; /* directory handle */
+#endif
 	const char	*resource; /* requested resource */
 	struct kreq	 req; /* request */
 	int		 loggedin; /* logged in? */
